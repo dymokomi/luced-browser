@@ -1,9 +1,15 @@
 ## luced-browser's entry point: a window on the location the command line
 ## names (a URL, a file, or what an address field would take), else a new tab.
 
-from app import Browser
+from luce_std import crash
+from app import Browser, version
 
 pub func main(arguments: list[str]) -> int!:
+    # Crash reports go to ~/.luce/crashes under the application's name and
+    # version from the start: a trap anywhere (the engine's set-up included)
+    # ends the process, and luce-ui would otherwise report under the window
+    # title, without a version.
+    crash.enable("luced-browser", version)
     let browser = Browser()
     browser.run(arguments)
     browser.close()

@@ -31,7 +31,8 @@ luc run -- https://example.com
 
 The first argument is a location to open; without one the browser opens a new tab. The
 engine writes the resources it reads (its error and directory pages) under
-`~/.luce/luced-browser/res`.
+`~/.luce/luced-browser/res`. A crash (a trap or a signal) leaves a report in
+`~/.luce/crashes`, named for luced-browser and its version.
 
 ## How it is built
 
@@ -53,7 +54,8 @@ sources. The window's title follows the current tab's page.
 
 The headless tests drive the browser through luce-ui's `dispatch` and `render`: typing an
 address and Enter, Enter again on the same address, a click on a link, the back and forward
-buttons, the window's title, the shortcuts, tabs, a drag that selects text, and a page over a
-loopback HTTP server (`tests/loopback_server.lucb`) whose socket the window's loop watches.
+buttons, the window's title, the shortcuts (Cmd/Ctrl+A in the address field selects the
+field, not the page), tabs, a drag that selects text, and a page over a loopback HTTP server
+(`tests/loopback_server.lucb`) whose socket the window's loop watches.
 
 MIT or Apache-2.0, at your option.

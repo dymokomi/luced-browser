@@ -1,11 +1,12 @@
 ## The browser driven as a user drives it, through the application's input
 ## dispatch and rendering on a standalone frame (luce-ui's clicks test does the
-## same): typing an address and Enter loads it, Enter again reloads it, a click
-## on a link follows it, the back and forward buttons walk the history, the
-## window's title follows the page, the tabs open and close, a drag selects the
-## page's text, and a page loads over a loopback socket the window's loop watches.
+## same): typing an address and Enter loads it, Enter again reloads it, Cmd+A
+## in the address field selects the field, a click on a link follows it, the
+## back and forward buttons walk the history, the window's title follows the
+## page, the tabs open and close, a drag selects the page's text, and a page
+## loads over a loopback socket the window's loop watches.
 
-from luce_ui.ui import Event
+from luce_ui.ui import Event, on_macos
 from luce_gpu.gpu import Frame
 from luce_window.input import EventKind, Key
 from luce_window import window
@@ -27,6 +28,10 @@ func click(browser: Browser, x: float, y: float) -> unit!:
 func click_address(browser: Browser) -> unit!:
     let field = browser.toolbar.address.layout().bounds()
     click(browser, field.x + 20.0, field.y + field.height * 0.5)
+
+## The platform's primary chord on `key`: Cmd on macOS, Ctrl elsewhere.
+func chord(browser: Browser, key: Key) -> unit!:
+    browser.app.dispatch(Event(kind = EventKind.key_down, key = key, meta = on_macos(), control = not on_macos()))
 
 func press(browser: Browser, key: Key) -> unit!:
     browser.app.dispatch(Event(kind = EventKind.key_down, key = key))
@@ -73,14 +78,14 @@ func settle(browser: Browser, seconds: float) -> unit!:
 pub func browsing(browser: Browser, pages: str) -> unit!:
     browser.app.layout(1000.0, 700.0)
     render(browser)
-    assert(browser.window_title == "New Tab")
+    assert(browser.app.title() == "New Tab")
     # Typing an address (a file path, as sanitize_url takes one) and Enter loads it.
 
     click_address(browser)
     type_line(browser, pages + "/first.html")
     wait_for(browser, "/pages/first.html")
     assert(browser.tabs[0].title == "First page")
-    assert(browser.window_title == "First page")
+    assert(browser.app.title() == "First page")
     assert(browser.toolbar.address.text().ends_with("/pages/first.html"))
     assert(not browser.toolbar.back.layout().is_enabled())
     # Enter on the same address loads it again: the new document has no selection.
@@ -95,13 +100,32 @@ pub func browsing(browser: Browser, pages: str) -> unit!:
         assert(time.now() - start <= patience, "Enter did not load the page again")
     wait_for(browser, "/pages/first.html")
     assert(browser.toolbar.address.text().ends_with("/pages/first.html"))
+    # Cmd/Ctrl+A in the address field, focused by a click or by Cmd/Ctrl+L,
+    # selects the field's text, not the page's: a focused field takes the
+    # editing chords before the commands do.
+
+    click_address(browser)
+    assert(browser.toolbar.address.layout().is_focused())
+    chord(browser, Key.a)
+    assert(webview.selected_text(browser.view()) == "", "Cmd+A in the clicked field selected the page")
+    browser.app.focus(browser.tabs[0].page.layout())
+    render(browser)
+    assert(browser.tabs[0].page.layout().is_focused())
+    # Cmd/Ctrl+L asks for the field's focus, which the next dispatch (or
+    # frame) applies before routing its event: Cmd/Ctrl+A right after goes to
+    # the field.
+
+    chord(browser, Key.l)
+    chord(browser, Key.a)
+    assert(browser.toolbar.address.layout().is_focused())
+    assert(webview.selected_text(browser.view()) == "", "Cmd+A in the field Cmd+L focused selected the page")
     # A click on the link follows it; the window's title follows the page.
 
     let page = browser.tabs[0].page.layout().bounds()
     click(browser, page.x + 20.0, page.y + 10.0)
     wait_for(browser, "/pages/second.html")
     assert(browser.tabs[0].title == "Second page")
-    assert(browser.window_title == "Second page")
+    assert(browser.app.title() == "Second page")
     assert(browser.toolbar.back.layout().is_enabled())
     assert(not browser.toolbar.forward.layout().is_enabled())
     # The back button goes back; the forward button forward again.
@@ -109,12 +133,12 @@ pub func browsing(browser: Browser, pages: str) -> unit!:
     let back = browser.toolbar.back.layout().bounds()
     click(browser, back.x + back.width * 0.5, back.y + back.height * 0.5)
     wait_for(browser, "/pages/first.html")
-    assert(browser.window_title == "First page")
+    assert(browser.app.title() == "First page")
     assert(browser.toolbar.forward.layout().is_enabled())
     let forward = browser.toolbar.forward.layout().bounds()
     click(browser, forward.x + forward.width * 0.5, forward.y + forward.height * 0.5)
     wait_for(browser, "/pages/second.html")
-    assert(browser.window_title == "Second page")
+    assert(browser.app.title() == "Second page")
     assert(not browser.toolbar.forward.layout().is_enabled())
     # Cmd/Ctrl+[ goes back too.
 
@@ -124,11 +148,11 @@ pub func browsing(browser: Browser, pages: str) -> unit!:
 
     browser.commands.new_tab.trigger()
     assert(browser.tabs.length == 2 and browser.current == 1)
-    assert(browser.window_title == "New Tab")
+    assert(browser.app.title() == "New Tab")
     browser.commands.close_tab.trigger()
     assert(browser.tabs.length == 1 and browser.current == 0)
     assert(browser.tabs[0].url.ends_with("/pages/first.html"))
-    assert(browser.window_title == "First page")
+    assert(browser.app.title() == "First page")
     # A drag across the paragraph selects its text; Select All the page's.
 
     let y = page.y + 64.0
@@ -158,7 +182,7 @@ pub func loopback(browser: Browser) -> unit!:
         step(browser)
         watched = math.max(watched, browser.sockets.length)
         assert(time.now() - start <= patience, "the loopback page did not load")
-    assert(browser.window_title == "Loopback page")
+    assert(browser.app.title() == "Loopback page")
     assert(loopback_requests(server) >= 1)
     assert(watched >= 1, "the window's loop watched the client's socket")
     while browser.sockets.length > 0:

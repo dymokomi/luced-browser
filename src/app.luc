@@ -51,8 +51,6 @@ pub class Browser:
     pub let commands: BrowserCommands
     pub var tabs: list[Tab]
     pub var current: int = 0
-    ## The window's title: the current tab's label.
-    pub var window_title: str = ""
     ## The engine's sockets, which the window's loop watches so that it sleeps
     ## until one is ready: each descriptor's watch handle.
     pub let sockets: map[int, int]
@@ -216,8 +214,7 @@ pub class Browser:
     ## The window's title follows the current tab's label.
     func show_title(self) -> unit!:
         let title = self.tabs[self.current].label()
-        if title != self.window_title:
-            self.window_title = title
+        if title != self.app.title():
             self.app.set_title(title)
 
     func show_navigation_buttons(self):
