@@ -1,0 +1,10 @@
+## luced-browser's entry point: a window on the location the command line
+## names (a URL, a file, or what an address field would take), else a new tab.
+
+from app import Browser
+
+pub func main(arguments: list[str]) -> int!:
+    let browser = Browser()
+    browser.run(arguments)
+    browser.close()
+    return 0

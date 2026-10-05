@@ -1,0 +1,74 @@
+## The look: luced-2d's, brutalist, grey, one orange, square. Values are
+## eleusis-layout's, authored in sRGB bytes and converted to the linear
+## light the GPU blends in.
+
+from luce_ui.ui import Theme
+from luce_gpu.gpu import Color
+from luce_color import transfer
+
+func linear(byte: float) -> float:
+    return transfer.srgb_decode(byte / 255.0)
+
+pub func grey(byte: float) -> Color:
+    return Color(linear(byte), linear(byte), linear(byte))
+
+pub func srgb(red: float, green: float, blue: float) -> Color:
+    return Color(linear(red), linear(green), linear(blue))
+
+## The accent, #E7A03F: everything the eye is meant to go to. Text on it is black.
+pub func accent() -> Color:
+    return srgb(231.0, 160.0, 63.0)
+
+## eleusis-layout's greys, darkest to lightest where they stack: the window
+## backdrop, the tab strip, a pane's surface, a raised surface and a border.
+pub func backdrop() -> Color:
+    return grey(26.0)
+
+pub func tab_strip() -> Color:
+    return grey(38.0)
+
+pub func surface() -> Color:
+    return grey(50.0)
+
+pub func surface_raised() -> Color:
+    return grey(46.0)
+
+pub func border() -> Color:
+    return grey(58.0)
+
+pub func text() -> Color:
+    return grey(217.0)
+
+pub func text_muted() -> Color:
+    return grey(140.0)
+
+## The page's backdrop before its first frame: the white a page starts on.
+pub func page_blank() -> Color:
+    return grey(255.0)
+
+## luce-ui's theme in this look: square corners, no shadows.
+pub func browser_theme() -> Theme!:
+    var theme = Theme()
+    theme.background = backdrop()
+    theme.panel = surface()
+    theme.gutter = tab_strip()
+    theme.foreground = text()
+    theme.muted = text_muted()
+    theme.selection = accent()
+    theme.accent = accent()
+    theme.button = grey(41.0)
+    theme.button_hover = grey(58.0)
+    theme.pressed = grey(72.0)
+    theme.menu = surface_raised()
+    theme.menu_hover = grey(64.0)
+    theme.strip = tab_strip()
+    theme.sunken = grey(41.0)
+    theme.raised = surface_raised()
+    theme.accent_text = grey(0.0)
+    theme.menu_selection = accent()
+    theme.border = border()
+    theme.active_border = grey(150.0)
+    theme.shadow_offset = 0.0
+    theme.shadow_opacity = 0.0
+    theme.control_radius = 0.0
+    return theme

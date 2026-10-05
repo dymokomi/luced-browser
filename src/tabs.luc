@@ -1,0 +1,116 @@
+## The tab strip: one tab a page, its title (or its address while it has
+## none), a close cross, and a + past the last for a new tab. The current
+## tab sits on the toolbar's surface with an accent line along its top;
+## the others on the strip. Square, as the rest of the look.
+
+from luce_ui.ui import Widget, Layout, Size, Constraints, Event, Painter, Font, Point
+from luce_gpu.gpu import RenderTarget, Rect
+from luce_window.input import EventKind, Cursor
+import theme
+from luce_std import math
+
+pub class TabStrip: Widget:
+    let box: Layout
+    let font: Font
+    pub var titles: list[str]
+    pub var current: int = 0
+    pub var on_switch: (func(int) -> unit!)? = none
+    pub var on_close: (func(int) -> unit!)? = none
+    pub var on_new: (func() -> unit!)? = none
+    let height: float = 30.0
+    let padding: float = 12.0
+    let cross: float = 22.0
+    let widest: float = 240.0
+
+    pub func init(self, font: Font) -> unit!:
+        self.font = font
+        self.titles = []
+        self.box = Layout()
+        self.box.set_cursor(Cursor.pointer)
+        self.box.set_interactive(true)
+        self.box.set_shrink(vertical = 0.0)
+
+    pub func layout(self) -> Layout:
+        return self.box
+
+    pub func measure(self, available: Constraints) -> Size!:
+        return Size(200.0, self.height)
+
+    ## Shows `titles` with `current` selected.
+    pub func show(self, titles: list[str], current: int):
+        self.titles = titles
+        self.current = current
+        self.box.invalidate()
+
+    ## The width of every tab: the strip shared out, at most `widest` each.
+    func tab_width(self, available: float) -> float:
+        let count = float(self.titles.length)
+        if count == 0.0:
+            return self.widest
+        return math.min(self.widest, math.max(60.0, (available - 32.0) / count))
+
+    ## `text` cut with an ellipsis to fit `width` points.
+    func fitted(self, text: str, width: float) -> str!:
+        if self.font.measure(text) <= width:
+            return text
+        var count = text.length
+        while count > 0:
+            let shorter = text[..<count] + "…"
+            if self.font.measure(shorter) <= width:
+                return shorter
+            count -= 1
+        return ""
+
+    pub func draw(self, target: RenderTarget) -> unit!:
+        let painter = Painter(target)
+        let size = target.size()
+        painter.rectangle(Rect(0.0, 0.0, size.width, size.height), theme.tab_strip())
+        let width = self.tab_width(size.width)
+        let text_y = math.max(0.0, (self.height - self.font.height()) * 0.5)
+        var x = 0.0
+        var index = 0
+        while index < self.titles.length:
+            let current = index == self.current
+            if current:
+                painter.rectangle(Rect(x, 0.0, width, self.height), theme.surface())
+                painter.rectangle(Rect(x, 0.0, width, 2.0), theme.accent())
+            let ink = theme.text() if current else theme.text_muted()
+            let title = self.fitted(self.titles[index], width - self.padding - self.cross - 4.0)
+            painter.text(title, x + self.padding, text_y, ink, self.font)
+            let cx = x + width - self.cross * 0.5 - 4.0
+            let cy = self.height * 0.5
+            painter.line(Point(cx - 3.5, cy - 3.5), Point(cx + 3.5, cy + 3.5), 1.2, theme.text_muted())
+            painter.line(Point(cx + 3.5, cy - 3.5), Point(cx - 3.5, cy + 3.5), 1.2, theme.text_muted())
+            # A hairline between tabs on the strip.
+
+            painter.rectangle(Rect(x + width, 6.0, 1.0, self.height - 12.0), theme.border())
+            x += width + 1.0
+            index += 1
+
+        let px = x + 14.0
+        let py = self.height * 0.5
+        painter.line(Point(px - 5.0, py), Point(px + 5.0, py), 1.4, theme.text_muted())
+        painter.line(Point(px, py - 5.0), Point(px, py + 5.0), 1.4, theme.text_muted())
+        painter.close()
+
+    pub func event(self, event: Event) -> unit!:
+        if event.kind != EventKind.pointer_down or event.button != 0 or not event.inside:
+            return
+        let width = self.tab_width(self.box.bounds().width)
+        var x = 0.0
+        var index = 0
+        while index < self.titles.length:
+            if event.x >= x and event.x < x + width:
+                if event.x >= x + width - self.cross - 4.0:
+                    if let close = self.on_close:
+                        close(index)
+                elif let switch = self.on_switch:
+                    switch(index)
+                self.box.invalidate()
+                return
+            x += width + 1.0
+            index += 1
+        if event.x >= x and event.x < x + 28.0:
+            if let add = self.on_new:
+                add()
+        self.box.invalidate()

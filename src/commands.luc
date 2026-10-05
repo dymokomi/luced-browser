@@ -1,0 +1,35 @@
+## The browser's commands: one Command per action, so a shortcut, a button
+## and a script reach the same one (as luced-2d's actions do).
+
+from luce_ui.ui import Command, Shortcut
+from luce_window.input import Key
+
+pub class BrowserCommands:
+    pub let back: Command
+    pub let forward: Command
+    pub let reload: Command
+    pub let stop: Command
+    pub let focus_address: Command
+    pub let copy: Command
+    pub let select_all: Command
+    pub let new_tab: Command
+    pub let close_tab: Command
+    pub let next_tab: Command
+    pub let previous_tab: Command
+
+    pub func init(self) -> unit!:
+        self.back = Command("Back", Shortcut(Key.left_bracket, primary = true), id = "back")
+        self.forward = Command("Forward", Shortcut(Key.right_bracket, primary = true), id = "forward")
+        self.reload = Command("Reload", Shortcut(Key.r, primary = true), id = "reload")
+        self.stop = Command("Stop", Shortcut(Key.period, primary = true), id = "stop")
+        self.focus_address = Command("Open Location", Shortcut(Key.l, primary = true), id = "focus_address")
+        self.copy = Command("Copy", Shortcut(Key.c, primary = true), id = "copy")
+        self.select_all = Command("Select All", Shortcut(Key.a, primary = true), id = "select_all")
+        self.new_tab = Command("New Tab", Shortcut(Key.t, primary = true), id = "new_tab")
+        self.close_tab = Command("Close Tab", Shortcut(Key.w, primary = true), id = "close_tab")
+        self.next_tab = Command("Next Tab", Shortcut(Key.right_bracket, primary = true, shift = true), id = "next_tab")
+        self.previous_tab = Command("Previous Tab", Shortcut(Key.left_bracket, primary = true, shift = true), id = "previous_tab")
+
+    ## Every command, for the application's registry.
+    pub func all(self) -> list[Command]:
+        return [self.back, self.forward, self.reload, self.stop, self.focus_address, self.copy, self.select_all, self.new_tab, self.close_tab, self.next_tab, self.previous_tab]

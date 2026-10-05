@@ -1,0 +1,9 @@
+## Headless checks of the browser: no window, the engine running for real.
+
+from browser_tests import browsing
+
+pub func main(arguments: list[str]) -> int!:
+    # The runner passes the test pages' directory.
+    browsing(arguments[0])
+    print("PASS luced-browser")
+    return 0

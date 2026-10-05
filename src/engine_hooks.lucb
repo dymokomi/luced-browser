@@ -1,0 +1,266 @@
+#==============================================================================================
+#
+#   engine_hooks - what the browser's Luce code leaves to Base: frames, keys, wake-ups
+#
+#   DESCRIPTION:
+#       The parts of embedding a page that scale with its content or need types Luce does not
+#       cross, kept to one call per frame or event (the owner's hot-paths-in-Base rule):
+#
+#         - the engine's resources and its wake-up: luce-window's window.wake ends the window
+#           loop's wait whenever the engine has new work (luce-browser-engine's webview
+#           event_loop.lucb), as luced-2d's system_hooks wakes it for its canvas workers;
+#         - a page's frame on the GPU (PageSurface): the view's presented frame copied into a
+#           texture when it changed, then drawn at the widget's size, device pixel for pixel;
+#         - keys: luce-window's physical keys as UIEvents key codes, with the character a key
+#           types, as Ladybird's UI/AppKit Event.mm maps NSEvents.
+#
+#       Copyright (c) 2026 the luce-browser authors.
+#       SPDX-License-Identifier: MIT OR Apache-2.0
+#
+#==============================================================================================
+
+from luce_browser_engine import web
+from luce_browser_engine import webview_api as webview
+from luce_window import window
+from luce_window import input
+from luce_gpu import gpu
+from luce_std import files
+from luce_clipboard import clipboard
+import interop
+import memory
+import strings
+
+# mark: The engine ==============================================================================
+
+## Sets up the engine for this process: its resources under ~/.luce/luced-browser/res, then the
+## event loop's wake-up.
+pub func start_engine() -> !:
+    let home = try files.home_directory()
+    defer home.release()
+    let directory = try strings.join([home.value, "/.luce/luced-browser/res"], "")
+    defer strings.release(directory)
+    try webview.initialize(directory)
+    webview.set_wake(wake_window)
+
+## The engine's wake hook: the window's loop stops waiting.
+func wake_window():
+    window.wake() catch failure:
+        _ = failure
+
+# mark: Frames ==================================================================================
+
+## A page's frame on the GPU: the texture its pixels go to, the device holding it, the CPU
+## copy they come through, and which frame is uploaded.
+struct PageSurfaceState:
+    var texture: gpu.Texture?
+    var device: gpu.Device?
+    var pixels: u8[]
+    var width: i64
+    var height: i64
+    var serial: i64
+
+## A page's frame on the GPU (see PageSurfaceState); Luce holds it as an object.
+pub handle PageSurface:
+    destroy close_page_surface
+
+## A surface with nothing uploaded yet.
+pub func open_page_surface() -> PageSurface:
+    let state = (new PageSurfaceState(texture = none, device = none, width = 0, height = 0, serial = -1) in memory.heap) else trap("out of memory")
+    return (PageSurface)(void*)state
+
+## Releases the texture, the device and the pixels.
+pub func close_page_surface(surface: PageSurface):
+    let state = (PageSurfaceState*)(void*)surface
+    page_surface_release(state)
+    free(state) in memory.heap
+
+func page_surface_release(state: PageSurfaceState*):
+    if let texture = state.texture:
+        var owned = texture
+        owned.destroy()
+        state.texture = none
+    if let device = state.device:
+        var owned = device
+        owned.destroy()
+        state.device = none
+    if state.pixels.length > 0:
+        free(state.pixels) in memory.heap
+        var empty: u8[]
+        state.pixels = empty
+    state.width = 0
+    state.height = 0
+    state.serial = -1
+
+## Draws `view`'s presented frame at the top left of `target`, one texel a device pixel
+## (`scale` device pixels a point), uploading it first when the view presented a newer frame.
+## Draws nothing before the first frame.
+pub func draw_page(surface: PageSurface, view: webview.View, target: interop.View[gpu.RenderTarget], scale: f64) -> !:
+    let state = (PageSurfaceState*)(void*)surface
+    let checked = try target.get()
+    let width = webview.frame_width(view)
+    let height = webview.frame_height(view)
+    if width <= 0 or height <= 0:
+        return
+    let serial = webview.frame_serial(view)
+    if width != state.width or height != state.height:
+        page_surface_release(state)
+        state.pixels = try new u8[(usize)(width * height * 4)] --- in memory.heap
+        state.width = width
+        state.height = height
+    let device = state.device else gpu.device_of(checked) catch failure:
+        if failure.code == gpu.unavailable:
+            return
+        error(failure.code, failure.message)
+    state.device = device
+    let texture = state.texture else try gpu.Texture.create(device, (u32)width, (u32)height, gpu.Format.rgba8)
+    if state.texture == none:
+        state.texture = texture
+        state.serial = -1
+    if serial != state.serial:
+        if not webview.copy_frame(view, state.pixels, (i32)width, (i32)height):
+            return
+        try texture.upload(state.pixels)
+        state.serial = serial
+    let points = gpu.Rect(0.0, 0.0, (f64)width / scale, (f64)height / scale)
+    try gpu.draw_image(checked, texture, points, none, 1.0, gpu.Filter.nearest)
+
+# mark: Keys ====================================================================================
+
+## The UIEvents key code of a physical key (ns_event_to_key_event's mapping, for luce-window's
+## keys), Key_Invalid for one without.
+pub func key_code(key: input.Key) -> i64:
+    let code: web.UiEventsKeyCode = match key:
+        .a => .key_a
+        .b => .key_b
+        .c => .key_c
+        .d => .key_d
+        .e => .key_e
+        .f => .key_f
+        .g => .key_g
+        .h => .key_h
+        .i => .key_i
+        .j => .key_j
+        .k => .key_k
+        .l => .key_l
+        .m => .key_m
+        .n => .key_n
+        .o => .key_o
+        .p => .key_p
+        .q => .key_q
+        .r => .key_r
+        .s => .key_s
+        .t => .key_t
+        .u => .key_u
+        .v => .key_v
+        .w => .key_w
+        .x => .key_x
+        .y => .key_y
+        .z => .key_z
+        .digit_1 => .key1
+        .digit_2 => .key2
+        .digit_3 => .key3
+        .digit_4 => .key4
+        .digit_5 => .key5
+        .digit_6 => .key6
+        .digit_7 => .key7
+        .digit_8 => .key8
+        .digit_9 => .key9
+        .digit_0 => .key0
+        .enter => .key_return
+        .escape => .key_escape
+        .backspace => .key_backspace
+        .tab => .key_tab
+        .space => .key_space
+        .minus => .key_minus
+        .equal => .key_equal
+        .left_bracket => .key_left_bracket
+        .right_bracket => .key_right_bracket
+        .backslash => .key_backslash
+        .semicolon => .key_semicolon
+        .apostrophe => .key_apostrophe
+        .grave => .key_backtick
+        .comma => .key_comma
+        .period => .key_period
+        .slash => .key_slash
+        .caps_lock => .key_caps_lock
+        .f1 => .key_f1
+        .f2 => .key_f2
+        .f3 => .key_f3
+        .f4 => .key_f4
+        .f5 => .key_f5
+        .f6 => .key_f6
+        .f7 => .key_f7
+        .f8 => .key_f8
+        .f9 => .key_f9
+        .f10 => .key_f10
+        .f11 => .key_f11
+        .f12 => .key_f12
+        .home => .key_home
+        .page_up => .key_page_up
+        .delete => .key_delete
+        .end => .key_end
+        .page_down => .key_page_down
+        .right => .key_right
+        .left => .key_left
+        .down => .key_down
+        .up => .key_up
+        .left_control => .key_left_control
+        .left_shift => .key_left_shift
+        .left_alt => .key_left_alt
+        .left_super => .key_left_super
+        .right_control => .key_right_control
+        .right_shift => .key_right_shift
+        .right_alt => .key_right_alt
+        .right_super => .key_right_super
+        _ => .key_invalid
+    return (i64)code
+
+## The character a key types on a US layout with `shift` held, 0 for none (the code point
+## ns_event_to_key_event takes from the event's characters; luce-window reports text apart).
+pub func key_code_point(key: input.Key, shift: bool) -> i64:
+    let k = (i64)key
+    if k >= (i64)input.Key.a and k <= (i64)input.Key.z:
+        return k - (i64)input.Key.a + (65 if shift else 97)
+    return match key:
+        .digit_1 => 33 if shift else 49
+        .digit_2 => 64 if shift else 50
+        .digit_3 => 35 if shift else 51
+        .digit_4 => 36 if shift else 52
+        .digit_5 => 37 if shift else 53
+        .digit_6 => 94 if shift else 54
+        .digit_7 => 38 if shift else 55
+        .digit_8 => 42 if shift else 56
+        .digit_9 => 40 if shift else 57
+        .digit_0 => 41 if shift else 48
+        .space => 32
+        .enter => 13
+        .tab => 9
+        .minus => 95 if shift else 45
+        .equal => 43 if shift else 61
+        .left_bracket => 123 if shift else 91
+        .right_bracket => 125 if shift else 93
+        .backslash => 124 if shift else 92
+        .semicolon => 58 if shift else 59
+        .apostrophe => 34 if shift else 39
+        .grave => 126 if shift else 96
+        .comma => 60 if shift else 44
+        .period => 62 if shift else 46
+        .slash => 63 if shift else 47
+        _ => 0
+
+## UIEvents::KeyModifier's mask of the modifier keys held (ns_modifiers_to_key_modifiers).
+pub func key_modifiers(shift: bool, control: bool, alt: bool, meta: bool) -> i64:
+    var modifiers: i64 = 0
+    if shift:
+        modifiers += (i64)web.UiEventsKeyModifier.mod_shift
+    if control:
+        modifiers += (i64)web.UiEventsKeyModifier.mod_ctrl
+    if alt:
+        modifiers += (i64)web.UiEventsKeyModifier.mod_alt
+    if meta:
+        modifiers += (i64)web.UiEventsKeyModifier.mod_super
+    return modifiers
+
+## Puts `text` on the system clipboard (a failure is reported).
+pub func copy_text(text: str) -> !:
+    try clipboard.write_text(text)

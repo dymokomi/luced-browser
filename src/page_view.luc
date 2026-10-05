@@ -1,0 +1,164 @@
+## The page: a widget showing one webview, the frames it presents drawn as
+## they come, and the pointer, wheel and keys it is given passed on to the
+## page (Ladybird's LadybirdWebView in UI/AppKit, in Luce). Everything that
+## scales with the page, the pixels and the event dispatch, happens in Base:
+## this class makes one call per frame or event.
+
+from luce_ui.ui import Widget, Layout, Size, Constraints, Event, Painter
+from luce_gpu.gpu import RenderTarget, Rect
+from luce_window.input import EventKind, Cursor, ScrollUnit
+from luce_browser_engine import webview_api as webview
+from engine_hooks import PageSurface, open_page_surface, draw_page, key_code, key_code_point, key_modifiers
+import theme
+import time
+from math import abs
+
+## Two clicks this close in time (nanoseconds) and space (points) make a
+## double click, as the platform's default does.
+let double_click_time: int = 500000000
+
+let double_click_distance: float = 4.0
+
+## UIEvents::MouseButton of luce-ui's zero-based button: 0 primary (1),
+## 1 secondary (2), 2 middle (4).
+func button_bit(button: int) -> int:
+    if button == 1:
+        return 2
+    if button == 2:
+        return 4
+    return 1
+
+## luce-window's cursor for a Gfx::StandardCursor the page asks for.
+pub func cursor_for(standard: int) -> Cursor:
+    if standard == 4:
+        return Cursor.text
+    if standard == 11:
+        return Cursor.pointer
+    if standard == 3:
+        return Cursor.crosshair
+    if standard == 5 or standard == 9:
+        return Cursor.resize_horizontal
+    if standard == 6 or standard == 10:
+        return Cursor.resize_vertical
+    if standard == 13:
+        return Cursor.grab
+    if standard == 14 or standard == 16:
+        return Cursor.grabbing
+    if standard == 18:
+        return Cursor.not_allowed
+    if standard == 1:
+        return Cursor.hidden
+    return Cursor.arrow
+
+pub class PageView: Widget:
+    let box: Layout
+    pub let view: webview.View
+    let surface: PageSurface
+    ## The size the page was last given, in points, and its scale.
+    var width: float = 0.0
+    var height: float = 0.0
+    var scale: float = 0.0
+    ## The frame drawn last.
+    var shown: int = -1
+    ## UIEvents::MouseButton mask of the buttons held.
+    var buttons: int = 0
+    var last_click: int = 0
+    var last_x: float = 0.0
+    var last_y: float = 0.0
+    var clicks: int = 0
+
+    pub func init(self) -> unit!:
+        self.box = Layout()
+        self.box.set_focusable(true)
+        self.box.set_interactive(true)
+        self.box.set_takes_scroll(true)
+        self.box.set_accepts_tab(true)
+        self.box.set_flex()
+        self.box.set_limits(Size(120.0, 80.0), Size(16384.0, 16384.0))
+        self.view = webview.open(800.0, 600.0, 1.0)
+        self.surface = open_page_surface()
+
+    pub func layout(self) -> Layout:
+        return self.box
+
+    pub func measure(self, available: Constraints) -> Size!:
+        return Size(800.0, 600.0)
+
+    ## Once a frame: redraw when the page presented a new frame, and follow
+    ## the cursor it asks for.
+    pub func poll(self):
+        if webview.frame_serial(self.view) != self.shown:
+            self.box.invalidate()
+
+    ## The page asked for another cursor.
+    pub func update_cursor(self):
+        self.box.set_cursor(cursor_for(webview.page_cursor(self.view)))
+
+    pub func draw(self, target: RenderTarget) -> unit!:
+        let size = target.size()
+        if size.width != self.width or size.height != self.height or size.scale != self.scale:
+            self.width = size.width
+            self.height = size.height
+            self.scale = size.scale
+            webview.resize(self.view, size.width, size.height, size.scale)
+        let painter = Painter(target)
+        painter.rectangle(Rect(0.0, 0.0, size.width, size.height), theme.page_blank())
+        painter.close()
+        draw_page(self.surface, self.view, target, size.scale)
+        self.shown = webview.frame_serial(self.view)
+
+    pub func event(self, event: Event) -> unit!:
+        let kind = event.kind
+        let modifiers = key_modifiers(event.shift, event.control, event.alt, event.meta)
+        if event.cancelled:
+            if self.buttons != 0:
+                webview.mouse_up(self.view, event.x, event.y, 1, 0, modifiers, 1)
+                self.buttons = 0
+            return
+        if kind == EventKind.pointer_moved:
+            webview.mouse_move(self.view, event.x, event.y, self.buttons, modifiers)
+        elif kind == EventKind.pointer_down and event.inside:
+            self.box.request_focus()
+            let bit = button_bit(event.button)
+            if self.buttons == 0 or self.buttons == bit:
+                self.buttons = bit
+            else:
+                self.buttons += bit
+            self.count_click(event)
+            webview.mouse_down(self.view, event.x, event.y, bit, self.buttons, modifiers, self.clicks)
+        elif kind == EventKind.pointer_up:
+            let bit = button_bit(event.button)
+            if self.buttons >= bit:
+                self.buttons -= bit
+            webview.mouse_up(self.view, event.x, event.y, bit, self.buttons, modifiers, self.clicks)
+        elif kind == EventKind.pointer_left:
+            webview.mouse_leave(self.view)
+        elif kind == EventKind.scroll:
+            # luce-window's deltas move the content (positive y down); the page
+            # scrolls the other way, a notch 24 points (AppKit's imprecise wheel).
+            let step = 24.0 if event.scroll_unit == ScrollUnit.lines else 1.0
+            webview.wheel(self.view, event.x, event.y, -event.scroll_x * step, -event.scroll_y * step, modifiers)
+        elif kind == EventKind.key_down:
+            # A character typed with Ctrl or Cmd held is a shortcut, not text.
+            let typed = 0 if event.control or event.meta else key_code_point(event.key, event.shift)
+            webview.key_down(self.view, key_code(event.key), modifiers, typed, event.repeated)
+        elif kind == EventKind.key_up:
+            let typed = 0 if event.control or event.meta else key_code_point(event.key, event.shift)
+            webview.key_up(self.view, key_code(event.key), modifiers, typed)
+
+    ## The click count of a press: one more than the last within the
+    ## double-click time and distance, else one.
+    func count_click(self, event: Event):
+        let now = time.now()
+        let near = abs(event.x - self.last_x) <= double_click_distance and abs(event.y - self.last_y) <= double_click_distance
+        if near and now - self.last_click <= double_click_time:
+            self.clicks += 1
+        else:
+            self.clicks = 1
+        self.last_click = now
+        self.last_x = event.x
+        self.last_y = event.y
+
+    pub func close(self):
+        self.surface.close()
+        self.view.close()

@@ -1,0 +1,293 @@
+## luced-browser's application: the window (tab strip, toolbar, loading bar,
+## the current tab's page), the commands, and the loop that runs the engine:
+## each turn it processes the engine's due work, takes what each page
+## reported, and asks the window's loop to wake when the engine is next due.
+
+from luce_ui.ui import Application, Font, VStack, Widget
+from interop import Connection
+from luce_browser_engine import webview_api as webview
+from engine_hooks import start_engine, copy_text
+from page_view import PageView
+from toolbar import BrowserToolbar
+from tabs import TabStrip
+from commands import BrowserCommands
+import theme
+import time
+
+## The version crash reports carry; keep it equal to package.prisma's.
+pub let version: str = "0.1.0"
+
+## What a new tab shows.
+pub let new_tab_page: str = "about:blank"
+
+## The engine that answers what is typed and is not an address.
+pub let search_engine: str = "DuckDuckGo"
+
+## One tab: its page and what the page last reported.
+pub class Tab:
+    pub let page: PageView
+    pub var title: str = ""
+    pub var url: str = ""
+    pub var loading: bool = false
+
+    pub func init(self) -> unit!:
+        self.page = PageView()
+
+    ## The tab's label: its title, else its address, else "New Tab".
+    pub func label(self) -> str:
+        if self.title.length > 0:
+            return self.title
+        if self.url.length > 0 and self.url != "about:blank":
+            return self.url
+        return "New Tab"
+
+pub class Browser:
+    pub let app: Application
+    pub let font: Font
+    pub let strip: TabStrip
+    pub let toolbar: BrowserToolbar
+    pub let commands: BrowserCommands
+    pub var tabs: list[Tab]
+    pub var current: int = 0
+    ## The pages' area: every tab's page, only the current one visible.
+    let pages: VStack
+    let connections: list[Connection]
+    ## The scheduled wake-up for the engine's next due work (an app timer), and when it is due.
+    var wake_timer: int = -1
+    var wake_due: int = 0
+
+    pub func init(self) -> unit!:
+        start_engine()
+        let font = Font()
+        self.font = font
+        self.commands = BrowserCommands()
+        self.strip = TabStrip(font)
+        self.toolbar = BrowserToolbar(font)
+        let first = Tab()
+        self.tabs = [first]
+        self.pages = VStack([first.page], spacing = 0.0)
+        self.pages.layout().set_flex()
+        let body = VStack([self.strip, self.toolbar.bar, self.toolbar.loading, self.pages], spacing = 0.0)
+        self.app = Application(body, title = "luced-browser", width = 1280, height = 860, theme = theme.browser_theme())
+        self.connections = []
+        self.connect()
+        self.app.set_commands(self.commands.all())
+        self.show_tabs()
+
+    ## Buttons, the address field, the tab strip and the commands to what they do.
+    func connect(self) -> unit!:
+        let commands = self.commands
+        self.connections.append(commands.back.on_trigger(func () -> unit!:
+            webview.go_back(self.view())))
+        self.connections.append(commands.forward.on_trigger(func () -> unit!:
+            webview.go_forward(self.view())))
+        self.connections.append(commands.reload.on_trigger(func () -> unit!:
+            webview.reload(self.view())))
+        self.connections.append(commands.stop.on_trigger(func () -> unit!:
+            webview.stop(self.view())))
+        self.connections.append(commands.focus_address.on_trigger(func () -> unit!:
+            self.app.focus(self.toolbar.address.layout())))
+        self.connections.append(commands.copy.on_trigger(func () -> unit!:
+            self.copy()))
+        self.connections.append(commands.select_all.on_trigger(func () -> unit!:
+            webview.select_all(self.view())))
+        self.connections.append(commands.new_tab.on_trigger(func () -> unit!:
+            self.open_tab(new_tab_page)))
+        self.connections.append(commands.close_tab.on_trigger(func () -> unit!:
+            self.close_tab(self.current)))
+        self.connections.append(commands.next_tab.on_trigger(func () -> unit!:
+            self.select_tab((self.current + 1) % self.tabs.length)))
+        self.connections.append(commands.previous_tab.on_trigger(func () -> unit!:
+            self.select_tab((self.current + self.tabs.length - 1) % self.tabs.length)))
+        self.connections.append(self.toolbar.back.on_click(func () -> unit!:
+            commands.back.trigger()))
+        self.connections.append(self.toolbar.forward.on_click(func () -> unit!:
+            commands.forward.trigger()))
+        self.connections.append(self.toolbar.reload.on_click(func () -> unit!:
+            commands.reload.trigger()))
+        self.connections.append(self.toolbar.stop.on_click(func () -> unit!:
+            commands.stop.trigger()))
+        self.connections.append(self.toolbar.address.on_commit(func (text: str) -> unit!:
+            self.address_committed(text)))
+        self.strip.on_switch = func (index: int) -> unit!:
+            self.select_tab(index)
+        self.strip.on_close = func (index: int) -> unit!:
+            self.close_tab(index)
+        self.strip.on_new = func () -> unit!:
+            self.open_tab(new_tab_page)
+        self.connections.append(self.app.on_frame(func (elapsed: float) -> unit!:
+            self.turn(elapsed)))
+
+    ## The current tab's page.
+    pub func view(self) -> webview.View:
+        return self.tabs[self.current].page.view
+    # -- Loading.
+
+    ## Loads what was typed (an address, a file, or a search), as the address
+    ## field's Enter does.
+    pub func go(self, text: str) -> unit!:
+        let loaded = webview.load(self.view(), text, search_engine)
+        _ = loaded
+        self.app.focus(self.tabs[self.current].page.layout())
+
+    ## The address field committed: on Enter (the field still has focus) the
+    ## text loads; when focus left it, the field shows the page's address again.
+    func address_committed(self, text: str) -> unit!:
+        if self.toolbar.address.layout().is_focused():
+            self.go(text)
+        else:
+            self.toolbar.address.set_text(self.tabs[self.current].url)
+
+    ## Copies the page's selection, or the address while the field has focus.
+    func copy(self) -> unit!:
+        if self.toolbar.address.layout().is_focused():
+            copy_text(self.toolbar.address.text())
+        else:
+            let selected = webview.selected_text(self.view())
+            if selected.length > 0:
+                copy_text(selected)
+    # -- Tabs.
+
+    ## A new tab loading `location`, made current.
+    pub func open_tab(self, location: str) -> unit!:
+        let tab = Tab()
+        self.tabs.append(tab)
+        self.rebuild_pages()
+        self.select_tab(self.tabs.length - 1)
+        self.go(location)
+        if location == new_tab_page:
+            self.app.focus(self.toolbar.address.layout())
+
+    ## Closes the tab at `index`; closing the last one ends the run.
+    pub func close_tab(self, index: int) -> unit!:
+        if index < 0 or index >= self.tabs.length:
+            return
+        if self.tabs.length == 1:
+            self.app.stop()
+            return
+        let closing = self.tabs[index]
+        _ = self.tabs.remove_at(index)
+        self.rebuild_pages()
+        closing.page.close()
+        var next = self.current
+        if next >= self.tabs.length:
+            next = self.tabs.length - 1
+        elif index < self.current:
+            next -= 1
+        self.current = -1
+        self.select_tab(next)
+
+    ## Makes the tab at `index` current: its page shown, its state in the toolbar.
+    pub func select_tab(self, index: int) -> unit!:
+        if index < 0 or index >= self.tabs.length:
+            return
+        self.current = index
+        var position = 0
+        for tab in self.tabs:
+            tab.page.layout().set_visible(position == index)
+            position += 1
+        let tab = self.tabs[index]
+        self.toolbar.address.set_text(tab.url)
+        self.toolbar.show_loading(tab.loading)
+        self.show_navigation_buttons()
+        self.show_tabs()
+        self.app.focus(tab.page.layout())
+
+    func rebuild_pages(self) -> unit!:
+        var pages: list[Widget] = []
+        for tab in self.tabs:
+            pages.append(tab.page)
+        self.pages.set_children(pages)
+
+    func show_tabs(self):
+        var titles: list[str] = []
+        for tab in self.tabs:
+            titles.append(tab.label())
+        self.strip.show(titles, self.current)
+
+    func show_navigation_buttons(self):
+        let view = self.view()
+        self.toolbar.back.layout().set_enabled(webview.can_go_back(view))
+        self.toolbar.forward.layout().set_enabled(webview.can_go_forward(view))
+    # -- Each turn.
+
+    ## One turn of the window's loop: the engine's due work, what each page
+    ## reported, the loading bar, and the next wake-up.
+    pub func turn(self, elapsed: float) -> unit!:
+        _ = webview.process_events()
+        var index = 0
+        for tab in self.tabs:
+            self.take_events(tab, index == self.current)
+            tab.page.poll()
+            index += 1
+        self.toolbar.loading.advance(elapsed)
+        self.schedule_wake()
+
+    ## Takes what `tab`'s page reported (ViewImplementation's callbacks).
+    func take_events(self, tab: Tab, current: bool) -> unit!:
+        let view = tab.page.view
+        while true:
+            let event = webview.take_event(view)
+            if event == webview.Event.none_:
+                return
+            if event == webview.Event.load_started:
+                tab.loading = true
+                tab.url = webview.page_url(view)
+                if current:
+                    self.toolbar.show_loading(true)
+                    if not self.toolbar.address.layout().is_focused():
+                        self.toolbar.address.set_text(tab.url)
+                self.show_tabs()
+            elif event == webview.Event.load_finished:
+                tab.loading = false
+                if current:
+                    self.toolbar.show_loading(false)
+            elif event == webview.Event.url_changed:
+                tab.url = webview.page_url(view)
+                if current and not self.toolbar.address.layout().is_focused():
+                    self.toolbar.address.set_text(tab.url)
+                self.show_tabs()
+            elif event == webview.Event.title_changed:
+                tab.title = webview.page_title(view)
+                self.show_tabs()
+            elif event == webview.Event.cursor_changed:
+                tab.page.update_cursor()
+            elif event == webview.Event.navigation_buttons_changed:
+                if current:
+                    self.show_navigation_buttons()
+
+    ## Asks the window's loop to run again when the engine is next due: one
+    ## app timer at a time, moved earlier when the engine needs it sooner.
+    func schedule_wake(self) -> unit!:
+        let due = webview.next_due()
+        if due < 0.0:
+            return
+        let now = time.now()
+        let at = now + int(due * 1000000000.0)
+        if self.wake_timer >= 0:
+            if self.wake_due <= at and self.wake_due > now:
+                return
+            self.app.cancel(self.wake_timer)
+        self.wake_due = at
+        self.wake_timer = self.app.after(due, func () -> unit!:
+            self.wake_timer = -1)
+
+    pub func run(self, arguments: list[str]) -> unit!:
+        # Luce's `main` gets the arguments without the program: the first is a location to open.
+        var location = new_tab_page
+        for argument in arguments:
+            if argument.length > 0 and argument[..<1] != "-":
+                location = argument
+                break
+        self.go(location)
+        if location == new_tab_page:
+            self.app.focus(self.toolbar.address.layout())
+        self.app.run(frame_limit = 3 if "--smoke" in arguments else 0)
+
+    pub func close(self):
+        for connection in self.connections:
+            connection.disconnect()
+        self.connections.clear()
+        for tab in self.tabs:
+            tab.page.close()
+        self.app.close()

@@ -1,0 +1,82 @@
+## The toolbar over the page: back, forward, reload (stop while loading),
+## the address field, and under it a loading bar in the accent.
+
+from luce_ui.ui import Widget, Layout, Size, Constraints, Event, Painter, Font, Button, TextField, Toolbar
+from luce_gpu.gpu import RenderTarget, Rect
+import theme
+
+## A two-point bar under the toolbar: the accent sweeping across while the
+## page loads, the strip's grey otherwise.
+pub class LoadingBar: Widget:
+    let box: Layout
+    pub var loading: bool = false
+    ## Where the sweep is, 0..1.
+    var phase: float = 0.0
+
+    pub func init(self) -> unit!:
+        self.box = Layout()
+        self.box.set_shrink(vertical = 0.0)
+        self.box.set_limits(Size(0.0, 2.0), Size(16384.0, 2.0))
+
+    pub func layout(self) -> Layout:
+        return self.box
+
+    pub func measure(self, available: Constraints) -> Size!:
+        return Size(available.width, 2.0)
+
+    ## Moves the sweep on by `elapsed` seconds while loading.
+    pub func advance(self, elapsed: float):
+        if not self.loading:
+            return
+        self.phase += elapsed * 0.8
+        while self.phase > 1.0:
+            self.phase -= 1.0
+        self.box.invalidate()
+
+    pub func set_loading(self, loading: bool):
+        if loading != self.loading:
+            self.loading = loading
+            self.phase = 0.0
+            self.box.invalidate()
+
+    pub func draw(self, target: RenderTarget) -> unit!:
+        let size = target.size()
+        let painter = Painter(target)
+        painter.rectangle(Rect(0.0, 0.0, size.width, size.height), theme.tab_strip())
+        if self.loading:
+            let span = size.width * 0.3
+            let start = (size.width + span) * self.phase - span
+            painter.rectangle(Rect(start, 0.0, span, size.height), theme.accent())
+        painter.close()
+
+    pub func event(self, event: Event) -> unit!:
+        return
+
+## The browser's toolbar: icon buttons (the browser connects them to its
+## commands, so a click and a shortcut do the same) and the address field.
+pub class BrowserToolbar:
+    pub let back: Button
+    pub let forward: Button
+    pub let reload: Button
+    pub let stop: Button
+    pub let address: TextField
+    pub let bar: Toolbar
+    pub let loading: LoadingBar
+
+    pub func init(self, font: Font) -> unit!:
+        # luciaos-assets has no arrows yet: reply and forward stand in for back and forward.
+        self.back = Button(icon = "reply", font = font)
+        self.forward = Button(icon = "forward", font = font)
+        self.reload = Button(icon = "reload", font = font)
+        self.stop = Button(icon = "close", font = font)
+        self.stop.layout().set_visible(false)
+        self.address = TextField(font = font, placeholder = "Search or enter address", cells = 60.0)
+        self.address.layout().set_flex(vertical = 0.0)
+        self.bar = Toolbar([self.back, self.forward, self.reload, self.stop, self.address], font = font)
+        self.loading = LoadingBar()
+
+    ## Shows reload or stop, and the loading bar, as the page loads or not.
+    pub func show_loading(self, loading: bool):
+        self.reload.layout().set_visible(not loading)
+        self.stop.layout().set_visible(loading)
+        self.loading.set_loading(loading)
