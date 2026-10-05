@@ -1,7 +1,7 @@
 #prisma 4.0
 def package "luced-browser" {
     str owner = "dymokomi"
-    str version = "0.1.0"
+    str version = "0.2.0"
     str kind = "application"
     str language = "luce"
     str description = "A web browser written in Luce over the luce-browser engine (Ladybird's LibWeb ported to Luce Base), with the look of a brutalist grey-and-orange tool."
@@ -15,13 +15,13 @@ def package "luced-browser" {
 
     def dependency "luce-ui" {
         str owner = "dymokomi"
-        str version = "^0.15.0"
+        str version = "^0.17.0"
         str path = "../luce-ui"
     }
 
     def dependency "luce-browser-engine" {
         str owner = "dymokomi"
-        str version = "^0.4.0"
+        str version = "^0.5.0"
         str path = "../luce-browser-engine"
     }
 
@@ -33,25 +33,25 @@ def package "luced-browser" {
 
     def dependency "luce-window" {
         str owner = "dymokomi"
-        str version = "^0.4.0"
+        str version = "^0.6.0"
         str path = "../luce-window"
     }
 
     def dependency "luce-gpu" {
         str owner = "dymokomi"
-        str version = "^0.4.0"
+        str version = "^0.5.0"
         str path = "../luce-gpu"
     }
 
     def dependency "luce-color" {
         str owner = "dymokomi"
-        str version = "^0.6.0"
+        str version = "^0.7.0"
         str path = "../luce-color"
     }
 
     def dependency "luce-clipboard" {
         str owner = "dymokomi"
-        str version = "^0.5.0"
+        str version = "^0.6.0"
         str path = "../luce-clipboard"
     }
 }

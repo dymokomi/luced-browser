@@ -1,9 +1,14 @@
 ## Headless checks of the browser: no window, the engine running for real.
 
-from browser_tests import browsing
+from app import Browser
+from browser_tests import browsing, loopback
 
 pub func main(arguments: list[str]) -> int!:
-    # The runner passes the test pages' directory.
-    browsing(arguments[0])
+    # One browser for every check: the engine is set up once per process. The
+    # runner passes the test pages' directory.
+    let browser = Browser()
+    browsing(browser, arguments[0])
+    loopback(browser)
+    browser.close()
     print("PASS luced-browser")
     return 0

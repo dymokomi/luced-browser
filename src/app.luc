@@ -1,7 +1,8 @@
 ## luced-browser's application: the window (tab strip, toolbar, loading bar,
 ## the current tab's page), the commands, and the loop that runs the engine:
 ## each turn it processes the engine's due work, takes what each page
-## reported, and asks the window's loop to wake when the engine is next due.
+## reported, hands the engine's sockets to the window's loop to watch, and asks
+## it to wake when the engine is next due.
 
 from luce_ui.ui import Application, Font, VStack, Widget
 from interop import Connection
@@ -12,10 +13,9 @@ from toolbar import BrowserToolbar
 from tabs import TabStrip
 from commands import BrowserCommands
 import theme
-import time
 
 ## The version crash reports carry; keep it equal to package.prisma's.
-pub let version: str = "0.1.0"
+pub let version: str = "0.2.0"
 
 ## What a new tab shows.
 pub let new_tab_page: str = "about:blank"
@@ -29,6 +29,8 @@ pub class Tab:
     pub var title: str = ""
     pub var url: str = ""
     pub var loading: bool = false
+    ## The current document's address once its load finished, "" while it loads.
+    pub var loaded_url: str = ""
 
     pub func init(self) -> unit!:
         self.page = PageView()
@@ -49,15 +51,19 @@ pub class Browser:
     pub let commands: BrowserCommands
     pub var tabs: list[Tab]
     pub var current: int = 0
+    ## The window's title: the current tab's label.
+    pub var window_title: str = ""
+    ## The engine's sockets, which the window's loop watches so that it sleeps
+    ## until one is ready: each descriptor's watch handle.
+    pub let sockets: map[int, int]
     ## The pages' area: every tab's page, only the current one visible.
     let pages: VStack
     let connections: list[Connection]
-    ## The scheduled wake-up for the engine's next due work (an app timer), and when it is due.
-    var wake_timer: int = -1
-    var wake_due: int = 0
 
     pub func init(self) -> unit!:
         start_engine()
+        webview.hand_over_sockets()
+        self.sockets = {}
         let font = Font()
         self.font = font
         self.commands = BrowserCommands()
@@ -73,6 +79,7 @@ pub class Browser:
         self.connect()
         self.app.set_commands(self.commands.all())
         self.show_tabs()
+        self.show_title()
 
     ## Buttons, the address field, the tab strip and the commands to what they do.
     func connect(self) -> unit!:
@@ -107,8 +114,10 @@ pub class Browser:
             commands.reload.trigger()))
         self.connections.append(self.toolbar.stop.on_click(func () -> unit!:
             commands.stop.trigger()))
+        self.connections.append(self.toolbar.address.on_submit(func (text: str) -> unit!:
+            self.go(text)))
         self.connections.append(self.toolbar.address.on_commit(func (text: str) -> unit!:
-            self.address_committed(text)))
+            self.address_left()))
         self.strip.on_switch = func (index: int) -> unit!:
             self.select_tab(index)
         self.strip.on_close = func (index: int) -> unit!:
@@ -124,18 +133,16 @@ pub class Browser:
     # -- Loading.
 
     ## Loads what was typed (an address, a file, or a search), as the address
-    ## field's Enter does.
+    ## field's Enter does, even when it is the page's own address.
     pub func go(self, text: str) -> unit!:
         let loaded = webview.load(self.view(), text, search_engine)
         _ = loaded
         self.app.focus(self.tabs[self.current].page.layout())
 
-    ## The address field committed: on Enter (the field still has focus) the
-    ## text loads; when focus left it, the field shows the page's address again.
-    func address_committed(self, text: str) -> unit!:
-        if self.toolbar.address.layout().is_focused():
-            self.go(text)
-        else:
+    ## The address field committed edited text (Enter commits it too, while it
+    ## has focus): once focus has left it, it shows the page's address again.
+    func address_left(self) -> unit!:
+        if not self.toolbar.address.layout().is_focused():
             self.toolbar.address.set_text(self.tabs[self.current].url)
 
     ## Copies the page's selection, or the address while the field has focus.
@@ -192,6 +199,7 @@ pub class Browser:
         self.show_navigation_buttons()
         self.show_tabs()
         self.app.focus(tab.page.layout())
+        self.show_title()
 
     func rebuild_pages(self) -> unit!:
         var pages: list[Widget] = []
@@ -205,6 +213,13 @@ pub class Browser:
             titles.append(tab.label())
         self.strip.show(titles, self.current)
 
+    ## The window's title follows the current tab's label.
+    func show_title(self) -> unit!:
+        let title = self.tabs[self.current].label()
+        if title != self.window_title:
+            self.window_title = title
+            self.app.set_title(title)
+
     func show_navigation_buttons(self):
         let view = self.view()
         self.toolbar.back.layout().set_enabled(webview.can_go_back(view))
@@ -212,7 +227,9 @@ pub class Browser:
     # -- Each turn.
 
     ## One turn of the window's loop: the engine's due work, what each page
-    ## reported, the loading bar, and the next wake-up.
+    ## reported, the loading bar, the sockets to watch, and the wake-up at the
+    ## engine's next deadline (none when nothing is scheduled); the turn that
+    ## answers the wake-up runs this again.
     pub func turn(self, elapsed: float) -> unit!:
         _ = webview.process_events()
         var index = 0
@@ -221,7 +238,12 @@ pub class Browser:
             tab.page.poll()
             index += 1
         self.toolbar.loading.advance(elapsed)
-        self.schedule_wake()
+        self.watch_sockets()
+        let due = webview.next_due()
+        if due < 0.0:
+            self.app.wake_at(0)
+        else:
+            self.app.wake_after(due)
 
     ## Takes what `tab`'s page reported (ViewImplementation's callbacks).
     func take_events(self, tab: Tab, current: bool) -> unit!:
@@ -232,6 +254,7 @@ pub class Browser:
                 return
             if event == webview.Event.load_started:
                 tab.loading = true
+                tab.loaded_url = ""
                 tab.url = webview.page_url(view)
                 if current:
                     self.toolbar.show_loading(true)
@@ -240,6 +263,7 @@ pub class Browser:
                 self.show_tabs()
             elif event == webview.Event.load_finished:
                 tab.loading = false
+                tab.loaded_url = webview.finished_load_url(view)
                 if current:
                     self.toolbar.show_loading(false)
             elif event == webview.Event.url_changed:
@@ -247,30 +271,35 @@ pub class Browser:
                 if current and not self.toolbar.address.layout().is_focused():
                     self.toolbar.address.set_text(tab.url)
                 self.show_tabs()
+                if current:
+                    self.show_title()
             elif event == webview.Event.title_changed:
                 tab.title = webview.page_title(view)
                 self.show_tabs()
+                if current:
+                    self.show_title()
             elif event == webview.Event.cursor_changed:
                 tab.page.update_cursor()
             elif event == webview.Event.navigation_buttons_changed:
                 if current:
                     self.show_navigation_buttons()
 
-    ## Asks the window's loop to run again when the engine is next due: one
-    ## app timer at a time, moved earlier when the engine needs it sooner.
-    func schedule_wake(self) -> unit!:
-        let due = webview.next_due()
-        if due < 0.0:
-            return
-        let now = time.now()
-        let at = now + int(due * 1000000000.0)
-        if self.wake_timer >= 0:
-            if self.wake_due <= at and self.wake_due > now:
+    ## Watches the sockets the engine reported (webview.hand_over_sockets) for
+    ## what it now waits for on each, or stops watching them. A ready socket
+    ## runs the engine at once; the turn it wakes takes what the pages reported.
+    func watch_sockets(self) -> unit!:
+        while true:
+            let descriptor = webview.take_socket_change()
+            if descriptor < 0:
                 return
-            self.app.cancel(self.wake_timer)
-        self.wake_due = at
-        self.wake_timer = self.app.after(due, func () -> unit!:
-            self.wake_timer = -1)
+            if let watch = self.sockets.remove(descriptor):
+                self.app.unwatch(watch)
+            let readable = webview.socket_readable(descriptor)
+            let writable = webview.socket_writable(descriptor)
+            if readable or writable:
+                let ready = func () -> unit!:
+                    _ = webview.process_events()
+                self.sockets[descriptor] = self.app.watch(descriptor, ready, readable = readable, writable = writable)
 
     pub func run(self, arguments: list[str]) -> unit!:
         # Luce's `main` gets the arguments without the program: the first is a location to open.
@@ -285,6 +314,9 @@ pub class Browser:
         self.app.run(frame_limit = 3 if "--smoke" in arguments else 0)
 
     pub func close(self):
+        for watch in self.sockets.values():
+            self.app.unwatch(watch)
+        self.sockets.clear()
         for connection in self.connections:
             connection.disconnect()
         self.connections.clear()

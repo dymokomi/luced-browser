@@ -8,7 +8,7 @@ for file in src/*.luc tests/*.luc; do
     luce fmt "$file" --check > /dev/null || { echo "$file is not formatted (luce fmt $file --write)"; exit 1; }
 done
 echo "== luce-base fmt --check"
-for file in src/*.lucb; do
+for file in src/*.lucb tests/*.lucb; do
     luce-base fmt "$file" --check > /dev/null || { echo "$file is not formatted (luce-base fmt $file --write)"; exit 1; }
 done
 echo "== headless tests"

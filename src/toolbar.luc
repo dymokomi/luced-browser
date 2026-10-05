@@ -64,9 +64,8 @@ pub class BrowserToolbar:
     pub let loading: LoadingBar
 
     pub func init(self, font: Font) -> unit!:
-        # luciaos-assets has no arrows yet: reply and forward stand in for back and forward.
-        self.back = Button(icon = "reply", font = font)
-        self.forward = Button(icon = "forward", font = font)
+        self.back = Button(icon = "arrow-left", font = font)
+        self.forward = Button(icon = "arrow-right", font = font)
         self.reload = Button(icon = "reload", font = font)
         self.stop = Button(icon = "close", font = font)
         self.stop.layout().set_visible(false)

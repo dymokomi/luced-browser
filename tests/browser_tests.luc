@@ -1,8 +1,9 @@
 ## The browser driven as a user drives it, through the application's input
 ## dispatch and rendering on a standalone frame (luce-ui's clicks test does the
-## same): typing an address and Enter loads it, a click on a link follows it,
-## the back and forward buttons walk the history, the tabs open and close, a
-## drag selects the page's text.
+## same): typing an address and Enter loads it, Enter again reloads it, a click
+## on a link follows it, the back and forward buttons walk the history, the
+## window's title follows the page, the tabs open and close, a drag selects the
+## page's text, and a page loads over a loopback socket the window's loop watches.
 
 from luce_ui.ui import Event
 from luce_gpu.gpu import Frame
@@ -10,9 +11,11 @@ from luce_window.input import EventKind, Key
 from luce_window import window
 from luce_browser_engine import webview_api as webview
 from app import Browser
+from loopback_server import LoopbackServer, start_loopback_server, loopback_port, loopback_requests
+import math
 import time
 
-## Seconds a test waits for a page before it fails.
+## Nanoseconds a test waits for a page before it fails.
 let patience: int = 20000000000
 
 func click(browser: Browser, x: float, y: float) -> unit!:
@@ -20,12 +23,20 @@ func click(browser: Browser, x: float, y: float) -> unit!:
     browser.app.dispatch(Event(kind = EventKind.pointer_down, x = x, y = y))
     browser.app.dispatch(Event(kind = EventKind.pointer_up, x = x, y = y))
 
+## A click in the middle of the address field.
+func click_address(browser: Browser) -> unit!:
+    let field = browser.toolbar.address.layout().bounds()
+    click(browser, field.x + 20.0, field.y + field.height * 0.5)
+
+func press(browser: Browser, key: Key) -> unit!:
+    browser.app.dispatch(Event(kind = EventKind.key_down, key = key))
+    browser.app.dispatch(Event(kind = EventKind.key_up, key = key))
+
 ## Types `text` into whatever has focus, then Enter.
 func type_line(browser: Browser, text: str) -> unit!:
     for byte in text.bytes():
         browser.app.dispatch(Event(kind = EventKind.text_input, codepoint = byte))
-    browser.app.dispatch(Event(kind = EventKind.key_down, key = Key.enter))
-    browser.app.dispatch(Event(kind = EventKind.key_up, key = Key.enter))
+    press(browser, Key.enter)
 
 ## Renders the window once, on a standalone frame of its own (a frame takes a
 ## bounded number of draws).
@@ -34,66 +45,90 @@ func render(browser: Browser) -> unit!:
     browser.app.render(frame.target())
     frame.close()
 
-## Runs the browser's turns (the engine, the pages' reports) and renders, until
-## the current page's address ends with `ending` and it is not loading.
+## One turn of the window's loop, then a render.
+func step(browser: Browser) -> unit!:
+    browser.turn(0.016)
+    render(browser)
+
+## Runs the browser's turns and renders until the current tab's document at an
+## address ending with `ending` has finished loading. The load is told by its
+## URL, as the engine's tests tell it: a new view also reports its initial
+## about:blank's.
 func wait_for(browser: Browser, ending: str) -> unit!:
     let start = time.now()
     while true:
-        browser.turn(0.016)
-        render(browser)
+        step(browser)
         let tab = browser.tabs[browser.current]
-        if tab.url.ends_with(ending) and not tab.loading:
+        if tab.loaded_url.ends_with(ending) and not tab.loading:
             return
-        assert(time.now() - start <= patience, "the page did not load")
+        assert(time.now() - start <= patience, f"the page {ending} did not load")
 
 ## Runs the browser's turns for `seconds`, rendering after each (the engine's
 ## frames are timed: a turn alone does not bring the next one closer).
 func settle(browser: Browser, seconds: float) -> unit!:
     let end = time.now() + int(seconds * 1000000000.0)
     while time.now() < end:
-        browser.turn(0.016)
-        render(browser)
+        step(browser)
 
-pub func browsing(pages: str) -> unit!:
-    let browser = Browser()
+pub func browsing(browser: Browser, pages: str) -> unit!:
     browser.app.layout(1000.0, 700.0)
     render(browser)
+    assert(browser.window_title == "New Tab")
     # Typing an address (a file path, as sanitize_url takes one) and Enter loads it.
 
-    let field = browser.toolbar.address.layout().bounds()
-    click(browser, field.x + 20.0, field.y + field.height * 0.5)
+    click_address(browser)
     type_line(browser, pages + "/first.html")
     wait_for(browser, "/pages/first.html")
     assert(browser.tabs[0].title == "First page")
+    assert(browser.window_title == "First page")
     assert(browser.toolbar.address.text().ends_with("/pages/first.html"))
     assert(not browser.toolbar.back.layout().is_enabled())
-    # A click on the link follows it.
+    # Enter on the same address loads it again: the new document has no selection.
+
+    browser.commands.select_all.trigger()
+    assert(webview.selected_text(browser.view()).contains("Select this text"))
+    click_address(browser)
+    press(browser, Key.enter)
+    let start = time.now()
+    while webview.selected_text(browser.view()) != "" or browser.tabs[0].loading:
+        step(browser)
+        assert(time.now() - start <= patience, "Enter did not load the page again")
+    wait_for(browser, "/pages/first.html")
+    assert(browser.toolbar.address.text().ends_with("/pages/first.html"))
+    # A click on the link follows it; the window's title follows the page.
 
     let page = browser.tabs[0].page.layout().bounds()
     click(browser, page.x + 20.0, page.y + 10.0)
     wait_for(browser, "/pages/second.html")
     assert(browser.tabs[0].title == "Second page")
+    assert(browser.window_title == "Second page")
     assert(browser.toolbar.back.layout().is_enabled())
+    assert(not browser.toolbar.forward.layout().is_enabled())
     # The back button goes back; the forward button forward again.
 
     let back = browser.toolbar.back.layout().bounds()
     click(browser, back.x + back.width * 0.5, back.y + back.height * 0.5)
     wait_for(browser, "/pages/first.html")
+    assert(browser.window_title == "First page")
     assert(browser.toolbar.forward.layout().is_enabled())
     let forward = browser.toolbar.forward.layout().bounds()
     click(browser, forward.x + forward.width * 0.5, forward.y + forward.height * 0.5)
     wait_for(browser, "/pages/second.html")
+    assert(browser.window_title == "Second page")
+    assert(not browser.toolbar.forward.layout().is_enabled())
     # Cmd/Ctrl+[ goes back too.
 
     browser.app.dispatch(Event(kind = EventKind.key_down, key = Key.left_bracket, meta = true, control = true))
     wait_for(browser, "/pages/first.html")
-    # A new tab, then closing it, leaves the first.
+    # A new tab, then closing it, leaves the first; the title follows the tab shown.
 
     browser.commands.new_tab.trigger()
     assert(browser.tabs.length == 2 and browser.current == 1)
+    assert(browser.window_title == "New Tab")
     browser.commands.close_tab.trigger()
     assert(browser.tabs.length == 1 and browser.current == 0)
     assert(browser.tabs[0].url.ends_with("/pages/first.html"))
+    assert(browser.window_title == "First page")
     # A drag across the paragraph selects its text; Select All the page's.
 
     let y = page.y + 64.0
@@ -107,4 +142,26 @@ pub func browsing(pages: str) -> unit!:
     assert(webview.selected_text(browser.view()) == "Select this text")
     browser.commands.select_all.trigger()
     assert(webview.selected_text(browser.view()).contains("Second page"))
-    browser.close()
+
+## A page over a loopback socket: the engine hands the client's socket to the
+## window's loop (Application.watch) while the response is on its way, and
+## takes it back once the server closed the connection.
+pub func loopback(browser: Browser) -> unit!:
+    let server: LoopbackServer = start_loopback_server()
+    let address = f"http://127.0.0.1:{loopback_port(server)}/page"
+    browser.toolbar.address.set_text("")
+    click_address(browser)
+    type_line(browser, address)
+    var watched = 0
+    let start = time.now()
+    while not (browser.tabs[0].loaded_url == address and not browser.tabs[0].loading):
+        step(browser)
+        watched = math.max(watched, browser.sockets.length)
+        assert(time.now() - start <= patience, "the loopback page did not load")
+    assert(browser.window_title == "Loopback page")
+    assert(loopback_requests(server) >= 1)
+    assert(watched >= 1, "the window's loop watched the client's socket")
+    while browser.sockets.length > 0:
+        step(browser)
+        assert(time.now() - start <= patience, "the closed socket stayed watched")
+    server.close()

@@ -1,0 +1,101 @@
+#==============================================================================================
+#
+#   loopback_server - an HTTP/1.1 server on 127.0.0.1 for the browser's tests
+#
+#   DESCRIPTION:
+#       Pages over a real socket, so a load goes through the engine's in-process client and the
+#       sockets it hands to the window's loop (the engine's tests_loader_5 server, cut down):
+#       a thread accepts and answers one connection at a time, one request each, then closes
+#       it. /page answers a small HTML page a little late, so the client's socket stays open
+#       and watched for a few turns; any other path is a 404. It counts the requests it served.
+#
+#       Copyright (c) 2026 the luce-browser authors.
+#       SPDX-License-Identifier: MIT OR Apache-2.0
+#
+#==============================================================================================
+
+from luce_std import net
+import memory
+import strings
+import thread
+
+# mark: The server ==============================================================================
+
+## How long /page waits before it answers, in milliseconds.
+let loopback_delay: u64 = 150
+
+## The page /page answers.
+let loopback_page = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 65\r\nConnection: close\r\n\r\n<title>Loopback page</title><p>Served over a loopback socket.</p>"
+
+let loopback_missing = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+
+## The server's state, in the C heap.
+struct LoopbackState:
+    var listener: net.Listener
+    var port: u16
+    var stopping: @u64
+    var requests: @u64
+    var accept_thread: thread.Handle
+
+## A running server; Luce holds it as an object whose close() stops it.
+pub handle LoopbackServer:
+    destroy stop_loopback_server
+
+## Reads a request's head; answers whether its target is /page (none at the end of the stream).
+func loopback_read_request(connection: net.Connection*) -> bool?:
+    var buffer: u8[4096] = ---
+    var used: usize = 0
+    while true:
+        if let end = net.http_head_end(buffer[..<used]):
+            let head = (str)buffer[..<end]
+            return strings.starts_with(head, "GET /page ")
+        if used == buffer.length:
+            return none
+        let count = connection.read(buffer[used..]) catch: return none
+        if count == 0:
+            return none
+        used += count
+
+## The accepting thread: each connection's one request answered, then the connection closed.
+func loopback_accept(context: void*?):
+    let state = (LoopbackState*)(context else trap("no server"))
+    while state.stopping.load(.acquire) == 0:
+        var connection = state.listener.accept() catch: return
+        defer connection.destroy()
+        if state.stopping.load(.acquire) != 0:
+            return
+        let page = loopback_read_request(&connection) else continue
+        _ = state.requests.add(1, .acq_rel)
+        if page:
+            thread.sleep(loopback_delay)
+        _ = connection.write(loopback_page if page else loopback_missing) catch: recover 0
+
+## A server on 127.0.0.1 at a port of the system's choosing, accepting on its own thread.
+pub func start_loopback_server() -> LoopbackServer:
+    with memory.heap:
+        let listener = net.Listener.bind(net.SocketAddress.loopback(0)) else trap("the server's listener")
+        let port = listener.port() else trap("the server's port")
+        let state = new LoopbackState(listener = listener, port = port) else trap("out of memory")
+        state.accept_thread = thread.spawn(loopback_accept, state, name = "loopback-server") else trap("the server's thread")
+        return (LoopbackServer)(void*)state
+
+## The server's port.
+pub func loopback_port(server: LoopbackServer) -> i64:
+    return (i64)((LoopbackState*)(void*)server).port
+
+## How many requests the server has answered.
+pub func loopback_requests(server: LoopbackServer) -> i64:
+    return (i64)((LoopbackState*)(void*)server).requests.load(.acquire)
+
+## Stops accepting (one last connection wakes the accepting thread), joins the thread, and frees
+## the server.
+pub func stop_loopback_server(server: LoopbackServer):
+    let state = (LoopbackState*)(void*)server
+    state.stopping.store(1, .release)
+    with memory.heap:
+        var wake = net.Connection.connect(net.SocketAddress.loopback(state.port)) catch: recover net.Connection()
+        wake.destroy()
+    var joined = state.accept_thread
+    joined.join() else trap("the server's thread joins")
+    state.listener.destroy()
+    free(state) in memory.heap

@@ -23,7 +23,7 @@ arguments = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix='luced-browser-tests-') as temp:
     project = Path(temp) / 'application'
     shutil.copytree(ROOT / 'src', project / 'src')
-    for module in (ROOT / 'tests').glob('*.luc'):
+    for module in [*(ROOT / 'tests').glob('*.luc'), *(ROOT / 'tests').glob('*.lucb')]:
         shutil.copy2(module, project / 'src' / module.name)
     # The application's own dependencies, each taken from the checkout beside this one.
     manifest = (ROOT / 'package.prisma').read_text()

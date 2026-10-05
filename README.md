@@ -39,7 +39,10 @@ The application (`src/*.luc`) is Luce: the window, toolbar, tabs, commands and t
 runs the engine each turn. Everything that scales with a page stays in Base, one call per
 frame or event: the engine's `webview` module (Ladybird's LibWebView and WebContent, in
 process) and `src/engine_hooks.lucb` (the frame's texture, key codes, the engine's wake-up
-of the window's loop).
+of the window's loop). The window's loop sleeps until the engine has work: it wakes at the
+engine's next deadline (`Application.wake_at`) and watches the sockets the engine hands it
+(`Application.watch`), as Ladybird's macOS loop makes its timers and notifiers run-loop
+sources. The window's title follows the current tab's page.
 
 ## Tests
 
@@ -49,7 +52,8 @@ of the window's loop).
 ```
 
 The headless tests drive the browser through luce-ui's `dispatch` and `render`: typing an
-address and Enter, a click on a link, the back and forward buttons, the shortcuts, tabs, a
-drag that selects text.
+address and Enter, Enter again on the same address, a click on a link, the back and forward
+buttons, the window's title, the shortcuts, tabs, a drag that selects text, and a page over a
+loopback HTTP server (`tests/loopback_server.lucb`) whose socket the window's loop watches.
 
 MIT or Apache-2.0, at your option.
