@@ -1,12 +1,14 @@
 ## The browser driven as a user drives it, through the application's input
 ## dispatch and rendering on a standalone frame (luce-ui's clicks test does the
 ## same): typing an address and Enter loads it, a click on a link follows it,
-## the back and forward buttons walk the history, the tabs open and close.
+## the back and forward buttons walk the history, the tabs open and close, a
+## drag selects the page's text.
 
 from luce_ui.ui import Event
 from luce_gpu.gpu import Frame
 from luce_window.input import EventKind, Key
 from luce_window import window
+from luce_browser_engine import webview_api as webview
 from app import Browser
 import time
 
@@ -43,6 +45,14 @@ func wait_for(browser: Browser, ending: str) -> unit!:
         if tab.url.ends_with(ending) and not tab.loading:
             return
         assert(time.now() - start <= patience, "the page did not load")
+
+## Runs the browser's turns for `seconds`, rendering after each (the engine's
+## frames are timed: a turn alone does not bring the next one closer).
+func settle(browser: Browser, seconds: float) -> unit!:
+    let end = time.now() + int(seconds * 1000000000.0)
+    while time.now() < end:
+        browser.turn(0.016)
+        render(browser)
 
 pub func browsing(pages: str) -> unit!:
     let browser = Browser()
@@ -84,4 +94,17 @@ pub func browsing(pages: str) -> unit!:
     browser.commands.close_tab.trigger()
     assert(browser.tabs.length == 1 and browser.current == 0)
     assert(browser.tabs[0].url.ends_with("/pages/first.html"))
+    # A drag across the paragraph selects its text; Select All the page's.
+
+    let y = page.y + 64.0
+    browser.app.dispatch(Event(kind = EventKind.pointer_moved, x = page.x + 1.0, y = y))
+    browser.app.dispatch(Event(kind = EventKind.pointer_down, x = page.x + 1.0, y = y))
+    settle(browser, 0.2)
+    browser.app.dispatch(Event(kind = EventKind.pointer_moved, x = page.x + 400.0, y = y))
+    settle(browser, 0.2)
+    browser.app.dispatch(Event(kind = EventKind.pointer_up, x = page.x + 400.0, y = y))
+    settle(browser, 0.2)
+    assert(webview.selected_text(browser.view()) == "Select this text")
+    browser.commands.select_all.trigger()
+    assert(webview.selected_text(browser.view()).contains("Second page"))
     browser.close()

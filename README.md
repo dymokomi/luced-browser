@@ -15,12 +15,13 @@ brutalist, grey, one orange (#E7A03F), square.
   `sanitize_url` decides.
 - Pages render as the engine renders them (CSS, SVG, images, web fonts) at the window's
   device pixel ratio, scroll with the wheel, the trackpad and the keys, follow links, show the
-  page's cursor, and keep a session history.
+  page's cursor, and keep a session history. A drag selects text (a double click a word, a
+  triple click a paragraph); Cmd/Ctrl+C copies it.
 - JavaScript is not run yet: pages load with scripting disabled (the engine's phase 3).
 
 Shortcuts (Cmd on macOS, Ctrl elsewhere): L the address field, R reload, `.` stop,
 `[` and `]` back and forward, T a new tab, W close it, Shift+`[` and Shift+`]` the tabs
-around, C copy.
+around, C copy, A select all.
 
 ## Running
 
@@ -48,6 +49,7 @@ of the window's loop).
 ```
 
 The headless tests drive the browser through luce-ui's `dispatch` and `render`: typing an
-address and Enter, a click on a link, the back and forward buttons, the shortcuts, tabs.
+address and Enter, a click on a link, the back and forward buttons, the shortcuts, tabs, a
+drag that selects text.
 
 MIT or Apache-2.0, at your option.
