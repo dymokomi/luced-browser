@@ -88,7 +88,8 @@ pub class Browser:
 
         self.crashed = crashed_tabs()
         self.session = SessionTabs(tabs_path())
-        self.app.on_crash(note_saved_tabs)
+        # Application keeps the hook (and removes it at close); this handle can go.
+        _ = self.app.on_crash(note_saved_tabs)
         self.select_tab(0)
 
     ## Buttons, the address field, the tab strip and the commands to what they do.
