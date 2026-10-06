@@ -3,8 +3,10 @@
 ## same): typing an address and Enter loads it, Enter again reloads it, Cmd+A
 ## in the address field selects the field, a click on a link follows it, the
 ## back and forward buttons walk the history, the window's title follows the
-## page, the tabs open and close, a drag selects the page's text, and a page
-## loads over a loopback socket the window's loop watches.
+## page, the tabs open and close, a drag selects the page's text, only the
+## current tab renders while the others load unseen, the tabs a crash saves
+## come back, and a page loads over a loopback socket the window's loop
+## watches.
 
 from luce_ui.ui import Event, on_macos
 from luce_gpu.gpu import Frame
@@ -12,6 +14,8 @@ from luce_window.input import EventKind, Key
 from luce_window import window
 from luce_browser_engine import webview_api as webview
 from app import Browser
+from luce_std import files
+from luce_std import paths
 from loopback_server import LoopbackServer, start_loopback_server, loopback_port, loopback_requests
 import math
 import time
@@ -166,6 +170,56 @@ pub func browsing(browser: Browser, pages: str) -> unit!:
     assert(webview.selected_text(browser.view()) == "Select this text")
     browser.commands.select_all.trigger()
     assert(webview.selected_text(browser.view()).contains("Second page"))
+
+## Runs the browser's turns and renders until `ready` holds.
+func wait_until(browser: Browser, ready: func() -> bool, what: str) -> unit!:
+    let start = time.now()
+    while not ready():
+        step(browser)
+        assert(time.now() - start <= patience, what)
+
+## Tabs: only the current tab's page renders. A background tab is hidden from
+## the engine, its load goes on and presents no frame, and switched to it
+## paints at once; a closed tab's page ends. The tabs saved for a crash
+## (save_tabs) open again (restore_tabs), the current one current again.
+pub func tabs(browser: Browser, pages: str, scratch: str) -> unit!:
+    assert(browser.tabs.length == 1)
+    let first = browser.tabs[0]
+    browser.commands.new_tab.trigger()
+    let second = browser.tabs[1]
+    type_line(browser, pages + "/second.html")
+    wait_for(browser, "/pages/second.html")
+    assert(webview.is_visible(second.page.view) and not webview.is_visible(first.page.view), "only the new current tab is shown")
+
+    browser.select_tab(0)
+    assert(webview.is_visible(first.page.view) and not webview.is_visible(second.page.view), "the tab switched from is hidden")
+    let serial = webview.frame_serial(second.page.view)
+    _ = webview.load(second.page.view, pages + "/first.html")
+    let loaded = func () -> bool:
+        return second.loaded_url.ends_with("/pages/first.html") and not second.loading
+    wait_until(browser, loaded, "the background tab did not load")
+    settle(browser, 0.2)
+    assert(webview.frame_serial(second.page.view) == serial, "a background tab presents no frame")
+
+    browser.select_tab(1)
+    let painted = func () -> bool:
+        return webview.frame_serial(second.page.view) != serial
+    wait_until(browser, painted, "the tab switched to did not paint")
+    # The tabs a crash saves, then opened again after the second is closed.
+
+    let saved = paths.join(scratch, "tabs.txt")
+    browser.save_tabs(saved)
+    let text = files.read_text(saved)
+    assert(text.starts_with("  file://") and text.contains("\n* file://") and text.ends_with("/pages/first.html\n"), "the tabs file lists the tabs, the current one marked")
+    browser.close_tab(1)
+    assert(browser.tabs.length == 1 and browser.current == 0)
+    assert(browser.restore_tabs(saved))
+    assert(browser.tabs.length == 2 and browser.current == 1, "the saved tabs open again, the current one current")
+    wait_for(browser, "/pages/first.html")
+    assert(not webview.is_visible(browser.tabs[0].page.view))
+    browser.close_tab(1)
+    assert(browser.tabs.length == 1 and browser.current == 0 and webview.is_visible(first.page.view))
+    wait_for(browser, "/pages/first.html")
 
 ## A page over a loopback socket: the engine hands the client's socket to the
 ## window's loop (Application.watch) while the response is on its way, and

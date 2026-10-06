@@ -12,10 +12,9 @@ from page_view import PageView
 from toolbar import BrowserToolbar
 from tabs import TabStrip
 from commands import BrowserCommands
+from recovery import SessionTabs, tabs_path, crashed_tabs, note_saved_tabs, tabs_text, parse_tabs
+from luce_std import files
 import theme
-
-## The version crash reports carry; keep it equal to package.prisma's.
-pub let version: str = "0.2.1"
 
 ## What a new tab shows.
 pub let new_tab_page: str = "about:blank"
@@ -57,27 +56,40 @@ pub class Browser:
     ## The pages' area: every tab's page, only the current one visible.
     let pages: VStack
     let connections: list[Connection]
+    ## The open tabs as a crash leaves them (recovery.luc), and the tabs a
+    ## crashed run left, for run to open again.
+    let session: SessionTabs
+    let crashed: str
 
     pub func init(self) -> unit!:
-        start_engine()
-        webview.hand_over_sockets()
-        self.sockets = {}
         let font = Font()
         self.font = font
         self.commands = BrowserCommands()
         self.strip = TabStrip(font)
         self.toolbar = BrowserToolbar(font)
-        let first = Tab()
-        self.tabs = [first]
-        self.pages = VStack([first.page], spacing = 0.0)
+        self.tabs = []
+        let no_pages: list[Widget] = []
+        self.pages = VStack(no_pages, spacing = 0.0)
         self.pages.layout().set_flex()
         let body = VStack([self.strip, self.toolbar.bar, self.toolbar.loading, self.pages], spacing = 0.0)
+        # The Application first: a process luce-ui started again to show a crash
+        # report shows it from here and ends, before the engine is set up.
+
         self.app = Application(body, title = "luced-browser", width = 1280, height = 860, theme = theme.browser_theme())
+        start_engine()
+        webview.hand_over_sockets()
+        self.sockets = {}
+        self.tabs = [Tab()]
+        self.rebuild_pages()
         self.connections = []
         self.connect()
         self.app.set_commands(self.commands.all())
-        self.show_tabs()
-        self.show_title()
+        # The tabs a crashed run left, read before this run's replace them.
+
+        self.crashed = crashed_tabs()
+        self.session = SessionTabs(tabs_path())
+        self.app.on_crash(note_saved_tabs)
+        self.select_tab(0)
 
     ## Buttons, the address field, the tab strip and the commands to what they do.
     func connect(self) -> unit!:
@@ -187,9 +199,15 @@ pub class Browser:
         if index < 0 or index >= self.tabs.length:
             return
         self.current = index
+        # Only the current tab's page renders: the others are hidden from the
+        # engine too, as Ladybird's UI hides a tab's view it switched from.
+
         var position = 0
         for tab in self.tabs:
-            tab.page.layout().set_visible(position == index)
+            let shown = position == index
+            tab.page.layout().set_visible(shown)
+            if webview.is_visible(tab.page.view) != shown:
+                webview.set_visible(tab.page.view, shown)
             position += 1
         let tab = self.tabs[index]
         self.toolbar.address.set_text(tab.url)
@@ -205,11 +223,15 @@ pub class Browser:
             pages.append(tab.page)
         self.pages.set_children(pages)
 
+    ## The tab strip shows the tabs, and a crash would save them as they are now.
     func show_tabs(self):
         var titles: list[str] = []
         for tab in self.tabs:
             titles.append(tab.label())
         self.strip.show(titles, self.current)
+
+        self.session.remember(self.urls(), self.current) catch failure:
+            _ = failure
 
     ## The window's title follows the current tab's label.
     func show_title(self) -> unit!:
@@ -300,15 +322,60 @@ pub class Browser:
 
     pub func run(self, arguments: list[str]) -> unit!:
         # Luce's `main` gets the arguments without the program: the first is a location to open.
-        var location = new_tab_page
+        var location = ""
         for argument in arguments:
             if argument.length > 0 and argument[..<1] != "-":
                 location = argument
                 break
-        self.go(location)
-        if location == new_tab_page:
+        # The tabs a crashed run left come back first; a location given opens after them.
+
+        var restored = false
+        if self.crashed != "":
+            restored = self.restore_tabs_text(self.crashed)
+        if location != "":
+            if restored:
+                self.open_tab(location)
+            else:
+                self.go(location)
+        elif not restored:
+            self.go(new_tab_page)
             self.app.focus(self.toolbar.address.layout())
         self.app.run(frame_limit = 3 if "--smoke" in arguments else 0)
+    # -- Recovery.
+
+    ## The open tabs' addresses, in order.
+    func urls(self) -> list[str]:
+        var urls: list[str] = []
+        for tab in self.tabs:
+            urls.append(tab.url if tab.url.length > 0 else new_tab_page)
+        return urls
+
+    ## Writes the open tabs' addresses, in order with the current one marked, to
+    ## `path`, as a crash saves them.
+    pub func save_tabs(self, path: str) -> unit!:
+        files.write_text(path, tabs_text(self.urls(), self.current))
+
+    ## Opens the tabs saved at `path` (save_tabs): the first in the current tab,
+    ## the others in new ones, then the one that was current made current.
+    ## Answers whether there were any.
+    pub func restore_tabs(self, path: str) -> bool!:
+        return self.restore_tabs_text(files.read_text(path))
+
+    ## Opens the tabs `text` (a tabs file's) holds, as restore_tabs does.
+    func restore_tabs_text(self, text: str) -> bool!:
+        let saved = parse_tabs(text)
+        if saved.urls.length == 0:
+            return false
+        var index = 0
+        for url in saved.urls:
+            if index == 0:
+                self.go(url)
+            else:
+                self.open_tab(url)
+            index += 1
+        let first = self.tabs.length - saved.urls.length
+        self.select_tab(first + saved.current)
+        return true
 
     pub func close(self):
         for watch in self.sockets.values():
@@ -319,4 +386,6 @@ pub class Browser:
         self.connections.clear()
         for tab in self.tabs:
             tab.page.close()
+        self.session.forget() catch failure:
+            _ = failure
         self.app.close()

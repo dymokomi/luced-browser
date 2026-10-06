@@ -1,0 +1,87 @@
+## What luced-browser leaves for after a crash: the open tabs' addresses, in
+## order, the current one marked, as a file in luce-std's recovery directory
+## (~/.luce/recovery/<the package's name>). The browser writes the file as its
+## tabs change and removes it when it closes, so a file found at launch is a
+## crashed run's (a trap's, or a fatal signal's, which runs no hook): the
+## launch opens those tabs again. The crash hook only tells the report, and so
+## the crash window, where the file is: a hook stays registered for the life of
+## the process, so it holds nothing of the browser.
+
+from luce_std import crash
+from luce_std import files
+from luce_std import paths
+
+## The file the tabs are saved to, in the recovery directory.
+pub let tabs_file_name: str = "tabs.txt"
+
+## Where the tabs are saved: the recovery directory's tabs file.
+pub func tabs_path() -> str!:
+    return paths.join(crash.recovery_directory(), tabs_file_name)
+
+## The tabs file's text a crashed run left, "" when there is none.
+pub func crashed_tabs() -> str!:
+    let path = tabs_path()
+    if not files.exists(path):
+        return ""
+    return files.read_text(path)
+
+## The crash hook: the report names the tabs file.
+pub func note_saved_tabs() -> unit!:
+    let path = tabs_path()
+    if files.exists(path):
+        crash.note_recovery(path)
+
+## The open tabs, kept in the tabs file while the browser runs.
+pub class SessionTabs:
+    let path: str
+    var text: str = ""
+
+    pub func init(self, path: str):
+        self.path = path
+
+    ## Saves the open tabs (their addresses in order, `current` the current
+    ## one's index) when they changed.
+    pub func remember(self, urls: list[str], current: int) -> unit!:
+        let text = tabs_text(urls, current)
+        if text != self.text:
+            self.text = text
+            files.write_text(self.path, text)
+
+    ## Removes the file: the run ended without a crash.
+    pub func forget(self) -> unit!:
+        if files.exists(self.path):
+            files.remove_file(self.path)
+        self.text = ""
+
+## The tabs a file holds: their addresses in order and which one was current.
+pub class SavedTabs:
+    pub var urls: list[str]
+    pub var current: int = 0
+
+    pub func init(self):
+        self.urls = []
+
+## The text of a tabs file: an address a line, the current one after "* ",
+## the others after two spaces.
+pub func tabs_text(urls: list[str], current: int) -> str:
+    var text = ""
+    var index = 0
+    for url in urls:
+        let mark = "* " if index == current else "  "
+        text = text + mark + url + "\n"
+        index += 1
+    return text
+
+## The tabs `text` (tabs_text's) holds; lines that are no tab are skipped.
+pub func parse_tabs(text: str) -> SavedTabs:
+    let saved = SavedTabs()
+    for line in text.split("\n"):
+        if line.length < 3:
+            continue
+        let mark = line[..<2]
+        if mark != "* " and mark != "  ":
+            continue
+        if mark == "* ":
+            saved.current = saved.urls.length
+        saved.urls.append(line[2..])
+    return saved
