@@ -15,7 +15,7 @@ from commands import BrowserCommands
 import theme
 
 ## The version crash reports carry; keep it equal to package.prisma's.
-pub let version: str = "0.2.0"
+pub let version: str = "0.2.1"
 
 ## What a new tab shows.
 pub let new_tab_page: str = "about:blank"

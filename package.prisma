@@ -1,7 +1,7 @@
 #prisma 4.0
 def package "luced-browser" {
     str owner = "dymokomi"
-    str version = "0.2.0"
+    str version = "0.2.1"
     str kind = "application"
     str language = "luce"
     str description = "A web browser written in Luce over the luce-browser engine (Ladybird's LibWeb ported to Luce Base), with the look of a brutalist grey-and-orange tool."
