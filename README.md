@@ -48,14 +48,15 @@ sources. The window's title follows the current tab's page.
 ## Tests
 
 ```sh
-./test.sh               # formatting, then the headless tests (no window, the engine for real)
-./test.sh --diagnostic  # the same in the diagnostic profile
+luc test                 # the headless tests, tests/app (no window, the engine for real)
+luc test --diagnostic    # the same in the diagnostic profile
+tools/check_format.sh    # lint: every module formatted
 ```
 
 The headless tests drive the browser through luce-ui's `dispatch` and `render`: typing an
 address and Enter, Enter again on the same address, a click on a link, the back and forward
 buttons, the window's title, the shortcuts (Cmd/Ctrl+A in the address field selects the
 field, not the page), tabs, a drag that selects text, and a page over a loopback HTTP server
-(`tests/loopback_server.lucb`) whose socket the window's loop watches.
+(`tests/app/loopback_server.lucb`) whose socket the window's loop watches.
 
 MIT or Apache-2.0, at your option.

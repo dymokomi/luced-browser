@@ -1,0 +1,22 @@
+## Headless checks of the browser: no window, the engine running for real, one browser for
+## every check (the engine is set up once per process). The pages are
+## beside this file; the checks that write files get a scratch folder under build/tests/app.
+
+from luce_std import files, paths, process
+from app import Browser
+from browser_tests import browsing, tabs, loopback
+
+pub func main(arguments: list[str]) -> int!:
+    let here = process.variable("LUC_TEST_DIR") else "tests/app"
+    let pages = files.canonical(paths.join(here, "pages"))
+    let scratch = files.canonical(".") + "/build/tests/app/scratch"
+    if files.exists(scratch):
+        files.remove_tree(scratch)
+    files.ensure_directory(scratch)
+    let browser = Browser()
+    browsing(browser, pages)
+    tabs(browser, pages, scratch)
+    loopback(browser)
+    browser.close()
+    print("PASS luced-browser")
+    return 0
