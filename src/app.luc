@@ -76,7 +76,7 @@ pub class Browser:
         let no_pages: list[Widget] = []
         self.pages = VStack(no_pages, spacing = 0.0)
         self.pages.layout().set_flex()
-        let body = VStack([self.strip, self.toolbar.bar, self.toolbar.loading, self.pages], spacing = 0.0)
+        let body = VStack([self.toolbar.bar, self.strip, self.toolbar.loading, self.pages], spacing = 0.0)
 
         # The Application first: a process luce-ui started again to show a crash
         # report shows it from here and ends, before the engine is set up.

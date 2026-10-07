@@ -1,7 +1,8 @@
-## The toolbar over the page: back, forward, reload (stop while loading),
-## the address field, and under it a loading bar in the accent.
+## The toolbar at the top of the window, above the tabs: back, forward,
+## reload (stop while loading) and the address field; and the loading bar in
+## the accent, which the browser places under the tabs.
 
-from luce_ui.ui import Widget, Layout, Size, Constraints, Event, Painter, Font, Button, TextField, Toolbar
+from luce_ui.ui import Widget, Layout, Size, Constraints, Event, Painter, Font, Button, TextField, Toolbar, HStack
 from luce_gpu.gpu import RenderTarget, Rect
 import theme
 
@@ -71,7 +72,12 @@ pub class BrowserToolbar:
         self.stop.layout().set_visible(false)
         self.address = TextField(font = font, placeholder = "Search or enter address", cells = 60.0)
         self.address.layout().set_flex(vertical = 0.0)
-        self.bar = Toolbar([self.back, self.forward, self.reload, self.stop, self.address], font = font)
+        # The buttons and the field a few points apart, and the bar padded around
+        # them so the top of the window doesn't feel cramped.
+        let row = HStack([self.back, self.forward, self.reload, self.stop, self.address], spacing = 6.0)
+        row.layout().set_flex(vertical = 0.0)
+        self.bar = Toolbar([row], font = font)
+        self.bar.layout().set_padding(12.0, 8.0)
         self.loading = LoadingBar()
 
     ## Shows reload or stop, and the loading bar, as the page loads or not.
