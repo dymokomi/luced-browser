@@ -9,6 +9,7 @@ from luce_gpu import gpu
 from interop import Connection
 from luce_browser_engine import webview_api as webview
 from engine_hooks import start_engine, copy_text
+import probe
 from page_view import PageView
 from toolbar import BrowserToolbar
 from tabs import TabStrip
@@ -16,6 +17,13 @@ from commands import BrowserCommands
 from recovery import SessionTabs, tabs_path, crashed_tabs, note_saved_tabs, tabs_text, parse_tabs
 from luce_std import files
 import theme
+from math import min
+
+## The longest slice of idle time a turn spends drawing ahead, in seconds.
+let idle_slice: float = 0.003
+
+## The least time before the engine's next deadline worth starting a slice.
+let idle_least: float = 0.002
 
 ## What a new tab shows.
 pub let new_tab_page: str = "about:blank"
@@ -249,11 +257,11 @@ pub class Browser:
 
     # -- Each turn.
     ## One turn of the window's loop: the engine's due work, what each page
-    ## reported, the loading bar, the sockets to watch, and the wake-up at the
-    ## engine's next deadline (none when nothing is scheduled); the turn that
-    ## answers the wake-up runs this again.
+    ## reported, the loading bar, the sockets to watch, idle-time drawing, and
+    ## the wake-up at the engine's next deadline (none when nothing is
+    ## scheduled); the turn that answers the wake-up runs this again.
     pub func turn(self, elapsed: float) -> unit!:
-        _ = webview.process_events()
+        _ = probe.process_events()
         var index = 0
         for tab in self.tabs:
             self.take_events(tab, index == self.current)
@@ -262,10 +270,19 @@ pub class Browser:
         self.toolbar.loading.advance(elapsed)
         self.watch_sockets()
         let due = webview.next_due()
-        if due < 0.0:
+        # Until the engine's next deadline the loop is idle: the current page
+        # draws tiles ahead of the scroll, a short slice a turn so input waits
+        # no longer than that, and the loop comes back when the page has more
+        # (at once, or when the scroll has stopped for full tiles).
+        var wake = due
+        if due < 0.0 or due > idle_least:
+            let again = self.tabs[self.current].page.draw_ahead(idle_slice if due < 0.0 else min(due, idle_slice))
+            if again >= 0.0 and (wake < 0.0 or again < wake):
+                wake = again
+        if wake < 0.0:
             self.app.wake_at(0)
         else:
-            self.app.wake_after(due)
+            self.app.wake_after(wake)
 
     ## Takes what `tab`'s page reported (ViewImplementation's callbacks).
     func take_events(self, tab: Tab, current: bool) -> unit!:

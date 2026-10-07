@@ -32,6 +32,8 @@ import interop
 import memory
 import os
 import strings
+import time
+import probe
 
 # mark: The engine ==============================================================================
 
@@ -108,10 +110,12 @@ pub func draw_page(surface: PageSurface, view: webview.View, target: interop.Vie
     let state = (PageSurfaceState*)(void*)surface
     let checked = try target.get()
     if webview.gpu_player_enabled(view):
+        let start = time.now()
         # A frame without a device (headless) shows nothing, as below.
         webview.gpu_draw(view, checked) catch failure:
             if failure.code != gpu.unavailable:
                 error(failure.code, failure.message)
+        probe.note_draw(view, time.now() - start, (f64)webview.frame_width(view) / scale, (f64)webview.frame_height(view) / scale)
         return
     let width = webview.frame_width(view)
     let height = webview.frame_height(view)

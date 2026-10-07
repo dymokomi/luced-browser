@@ -1,0 +1,121 @@
+#==============================================================================================
+#
+#   probe - frame measurements in the running browser (LUCED_BROWSER_PROBE)
+#
+#   DESCRIPTION:
+#       With LUCED_BROWSER_PROBE set, the browser measures itself as it runs, so a live page
+#       can be compared with tools/scroll_bench's saved one: the engine's turns (tasks,
+#       timers, style, layout, painting), the page's draws (the GPU player: tiles and
+#       composite), the frames the engine presented, the display lists the GPU player took
+#       (each new one drops every kept tile), and the tiles it drew. A line a second goes to
+#       standard output. LUCED_BROWSER_PROBE=N (N > 0) also scrolls the current page by N
+#       points each time it draws, down then back up, as a steady wheel would.
+#
+#       Copyright (c) 2026 the luce-browser authors.
+#       SPDX-License-Identifier: MIT OR Apache-2.0
+#
+#==============================================================================================
+
+from luce_browser_engine import webview_api as webview
+import os
+import strings
+import time
+
+## What the probe counted since its last line.
+struct Probe:
+    var on: bool
+    var checked: bool
+    var step: f64
+    var direction: f64 = 1.0
+    var since: u64
+    var turns: u64
+    var turn_ns: u64
+    var turn_max: u64
+    var draws: u64
+    var draw_ns: u64
+    var draw_max: u64
+    var serial: i64
+    var presented: u64
+    ## The GPU player's counts at the last line: display lists, GPU, CPU, empty, not-ready and
+    ## idle tiles, raster ns in draws and idle.
+    var last: u64[9]
+    var described: bool
+    var lines: u64
+    var fallbacks: u64[24]
+    var scrolled: f64
+
+var probe_the: Probe = Probe()
+
+## Whether the probe is on (LUCED_BROWSER_PROBE is set), read once.
+func probe_on() -> bool:
+    if not probe_the.checked:
+        probe_the.checked = true
+        if let value = os.env("LUCED_BROWSER_PROBE"):
+            probe_the.on = true
+            probe_the.step = strings.parse_f64(value) catch failure: recover 0.0
+            probe_the.since = time.now()
+    return probe_the.on
+
+## The engine's due work (webview.process_events), timed when the probe is on.
+pub func process_events() -> i64:
+    if not probe_on():
+        return webview.process_events()
+    let start = time.now()
+    let count = webview.process_events()
+    let spent = time.now() - start
+    probe_the.turns += 1
+    probe_the.turn_ns += spent
+    probe_the.turn_max = spent if spent > probe_the.turn_max else probe_the.turn_max
+    probe_report()
+    return count
+
+## Notes a draw of `view` that took `spent` nanoseconds; scrolls it on when asked to.
+pub func note_draw(view: webview.View, spent: u64, width: f64, height: f64):
+    if not probe_on():
+        return
+    probe_the.draws += 1
+    if not probe_the.described and probe_the.lines == 10:
+        probe_the.described = true
+        webview.gpu_describe_layers(view)
+    probe_the.draw_ns += spent
+    probe_the.draw_max = spent if spent > probe_the.draw_max else probe_the.draw_max
+    let serial = webview.frame_serial(view)
+    if serial != probe_the.serial:
+        probe_the.presented += 1
+        probe_the.serial = serial
+    if probe_the.step > 0.0:
+        # Down for 4,000 points, then back up, and so on.
+        if probe_the.scrolled >= 4000.0:
+            probe_the.direction = -probe_the.direction
+            probe_the.scrolled = 0.0
+        webview.wheel(view, width / 2.0, height / 2.0, 0.0, probe_the.direction * probe_the.step, 0)
+        probe_the.scrolled += probe_the.step
+    probe_report()
+
+## Prints the second's line once a second has passed.
+func probe_report():
+    let now = time.now()
+    if now - probe_the.since < 1000000000:
+        return
+    var now_counts: u64[9]
+    webview.gpu_counts(now_counts)
+    let last = probe_the.last
+    let draws = probe_the.draws if probe_the.draws > 0 else 1
+    let turns = probe_the.turns if probe_the.turns > 0 else 1
+    print(f"probe: {probe_the.draws} draws avg {probe_the.draw_ns // draws // 1000} us max {probe_the.draw_max // 1000} us; {probe_the.presented} frames presented; {probe_the.turns} turns, {probe_the.turn_ns // 1000000} ms in all, avg {probe_the.turn_ns // turns // 1000} us max {probe_the.turn_max // 1000} us; {now_counts[0] - last[0]} new display lists; tiles {now_counts[1] - last[1]} GPU {now_counts[2] - last[2]} CPU {now_counts[3] - last[3]} empty, {now_counts[4] - last[4]} not ready, {now_counts[5] - last[5]} idle, {now_counts[8] - last[8]} of dynamic layers; raster {(now_counts[6] - last[6]) // 1000000} ms in draws, {(now_counts[7] - last[7]) // 1000000} ms idle")
+    probe_the.last = now_counts
+    var fallbacks: u64[24]
+    webview.gpu_fallback_counts(fallbacks)
+    for index in 0..<(usize)24:
+        if fallbacks[index] > probe_the.fallbacks[index]:
+            print(f"probe:   CPU tiles for {webview.gpu_fallback_name((i64)index)}: {fallbacks[index] - probe_the.fallbacks[index]}")
+    probe_the.fallbacks = fallbacks
+    probe_the.since = now
+    probe_the.lines += 1
+    probe_the.turns = 0
+    probe_the.turn_ns = 0
+    probe_the.turn_max = 0
+    probe_the.draws = 0
+    probe_the.draw_ns = 0
+    probe_the.draw_max = 0
+    probe_the.presented = 0

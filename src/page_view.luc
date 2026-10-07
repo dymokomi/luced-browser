@@ -85,11 +85,19 @@ pub class PageView: Widget:
     pub func measure(self, available: Constraints) -> Size!:
         return Size(800.0, 600.0)
 
-    ## Once a frame: redraw when the page presented a new frame, and follow
-    ## the cursor it asks for.
+    ## Once a frame: redraw when the page presented a new frame, or when the
+    ## last frame showed tiles that were not drawn yet (the GPU player's raster
+    ## budget left them for later), and follow the cursor it asks for.
     pub func poll(self):
-        if webview.frame_serial(self.view) != self.shown:
+        if webview.frame_serial(self.view) != self.shown or webview.gpu_incomplete(self.view):
             self.box.invalidate()
+
+    ## Idle time: the GPU player draws tiles ahead of the scroll for up to
+    ## `seconds`; when to come back, in seconds (0 at once, -1 never).
+    pub func draw_ahead(self, seconds: float) -> float:
+        if not webview.gpu_player_enabled(self.view):
+            return -1.0
+        return webview.gpu_idle(self.view, seconds)
 
     ## The page asked for another cursor.
     pub func update_cursor(self):
