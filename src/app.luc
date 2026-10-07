@@ -73,11 +73,11 @@ pub class Browser:
         self.pages = VStack(no_pages, spacing = 0.0)
         self.pages.layout().set_flex()
         let body = VStack([self.strip, self.toolbar.bar, self.toolbar.loading, self.pages], spacing = 0.0)
+
         # The Application first: a process luce-ui started again to show a crash
         # report shows it from here and ends, before the engine is set up.
         # An encoded window surface: pages blend on encoded values (as Skia and the CPU
         # player do), so the GPU player composites its tiles straight onto the window.
-
         self.app = Application(body, title = "luced-browser", width = 1280, height = 860, theme = theme.browser_theme(), blending = gpu.Blending.encoded)
         start_engine()
         webview.hand_over_sockets()
@@ -143,8 +143,8 @@ pub class Browser:
     ## The current tab's page.
     pub func view(self) -> webview.View:
         return self.tabs[self.current].page.view
-    # -- Loading.
 
+    # -- Loading.
     ## Loads what was typed (an address, a file, or a search), as the address
     ## field's Enter does, even when it is the page's own address.
     pub func go(self, text: str) -> unit!:
@@ -166,8 +166,8 @@ pub class Browser:
             let selected = webview.selected_text(self.view())
             if selected.length > 0:
                 copy_text(selected)
-    # -- Tabs.
 
+    # -- Tabs.
     ## A new tab loading `location`, made current.
     pub func open_tab(self, location: str) -> unit!:
         let tab = Tab()
@@ -246,8 +246,8 @@ pub class Browser:
         let view = self.view()
         self.toolbar.back.layout().set_enabled(webview.can_go_back(view))
         self.toolbar.forward.layout().set_enabled(webview.can_go_forward(view))
-    # -- Each turn.
 
+    # -- Each turn.
     ## One turn of the window's loop: the engine's due work, what each page
     ## reported, the loading bar, the sockets to watch, and the wake-up at the
     ## engine's next deadline (none when nothing is scheduled); the turn that
@@ -344,8 +344,8 @@ pub class Browser:
             self.go(new_tab_page)
             self.app.focus(self.toolbar.address.layout())
         self.app.run(frame_limit = 3 if "--smoke" in arguments else 0)
-    # -- Recovery.
 
+    # -- Recovery.
     ## The open tabs' addresses, in order.
     func urls(self) -> list[str]:
         var urls: list[str] = []
@@ -393,5 +393,4 @@ pub class Browser:
             _ = failure
         self.app.close()
         # The engine's last step: it ends what Ladybird's process exit ends.
-
         webview.shutdown()
