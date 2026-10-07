@@ -5,6 +5,7 @@
 ## it to wake when the engine is next due.
 
 from luce_ui.ui import Application, Font, VStack, Widget
+from luce_gpu import gpu
 from interop import Connection
 from luce_browser_engine import webview_api as webview
 from engine_hooks import start_engine, copy_text
@@ -75,7 +76,9 @@ pub class Browser:
         # The Application first: a process luce-ui started again to show a crash
         # report shows it from here and ends, before the engine is set up.
 
-        self.app = Application(body, title = "luced-browser", width = 1280, height = 860, theme = theme.browser_theme())
+        # An encoded window surface: pages blend on encoded values (as Skia and the CPU
+        # player do), so the GPU player composites its tiles straight onto the window.
+        self.app = Application(body, title = "luced-browser", width = 1280, height = 860, theme = theme.browser_theme(), blending = gpu.Blending.encoded)
         start_engine()
         webview.hand_over_sockets()
         self.sockets = {}
