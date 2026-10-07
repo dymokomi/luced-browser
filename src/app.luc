@@ -75,9 +75,9 @@ pub class Browser:
         let body = VStack([self.strip, self.toolbar.bar, self.toolbar.loading, self.pages], spacing = 0.0)
         # The Application first: a process luce-ui started again to show a crash
         # report shows it from here and ends, before the engine is set up.
-
         # An encoded window surface: pages blend on encoded values (as Skia and the CPU
         # player do), so the GPU player composites its tiles straight onto the window.
+
         self.app = Application(body, title = "luced-browser", width = 1280, height = 860, theme = theme.browser_theme(), blending = gpu.Blending.encoded)
         start_engine()
         webview.hand_over_sockets()
@@ -392,3 +392,6 @@ pub class Browser:
         self.session.forget() catch failure:
             _ = failure
         self.app.close()
+        # The engine's last step: it ends what Ladybird's process exit ends.
+
+        webview.shutdown()
