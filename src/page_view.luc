@@ -8,7 +8,7 @@ from luce_ui.ui import Widget, Layout, Size, Constraints, Event, Painter
 from luce_gpu.gpu import RenderTarget, Rect
 from luce_window.input import EventKind, Cursor, ScrollUnit
 from luce_browser_engine import webview_api as webview
-from engine_hooks import PageSurface, open_page_surface, draw_page, key_code, key_code_point, key_modifiers
+from engine_hooks import PageSurface, open_page_surface, draw_page, key_code, key_code_point, key_modifiers, choose_player
 import theme
 import time
 from math import abs
@@ -76,6 +76,7 @@ pub class PageView: Widget:
         self.box.set_flex()
         self.box.set_limits(Size(120.0, 80.0), Size(16384.0, 16384.0))
         self.view = webview.open(800.0, 600.0, 1.0)
+        choose_player(self.view)
         self.surface = open_page_surface()
 
     pub func layout(self) -> Layout:

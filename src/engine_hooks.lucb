@@ -9,8 +9,10 @@
 #         - the engine's resources and its wake-up: luce-window's window.wake ends the window
 #           loop's wait whenever the engine has new work (luce-browser-engine's webview
 #           event_loop.lucb), as luced-2d's system_hooks wakes it for its canvas workers;
-#         - a page's frame on the GPU (PageSurface): the view's presented frame copied into a
-#           texture when it changed, then drawn at the widget's size, device pixel for pixel;
+#         - a page's frame on the GPU (PageSurface): drawn by the engine's GPU player, which
+#           keeps the page's tiles in textures across scrolls (luce-browser-render docs/GPU.md),
+#           or, with LUCED_BROWSER_PLAYER=cpu, the CPU player's frame copied into a texture
+#           when it changed, then drawn at the widget's size, device pixel for pixel;
 #         - keys: luce-window's physical keys as UIEvents key codes, with the character a key
 #           types, as Ladybird's UI/AppKit Event.mm maps NSEvents.
 #
@@ -28,6 +30,7 @@ from luce_std import files
 from luce_clipboard import clipboard
 import interop
 import memory
+import os
 import strings
 
 # mark: The engine ==============================================================================
@@ -48,6 +51,12 @@ func wake_window():
         _ = failure
 
 # mark: Frames ==================================================================================
+
+## Puts `view` on the player the process uses: the GPU player unless the environment's
+## LUCED_BROWSER_PLAYER is "cpu".
+pub func choose_player(view: webview.View):
+    let wanted = os.env("LUCED_BROWSER_PLAYER") else ""
+    webview.set_gpu_player(view, wanted != "cpu")
 
 ## A page's frame on the GPU: the texture its pixels go to, the device holding it, the CPU
 ## copy they come through, and which frame is uploaded.
@@ -92,11 +101,18 @@ func page_surface_release(state: PageSurfaceState*):
     state.serial = -1
 
 ## Draws `view`'s presented frame at the top left of `target`, one texel a device pixel
-## (`scale` device pixels a point), uploading it first when the view presented a newer frame.
-## Draws nothing before the first frame.
+## (`scale` device pixels a point): with the GPU player, its tiles; otherwise the CPU player's
+## frame, uploaded first when the view presented a newer one. Draws nothing before the first
+## frame.
 pub func draw_page(surface: PageSurface, view: webview.View, target: interop.View[gpu.RenderTarget], scale: f64) -> !:
     let state = (PageSurfaceState*)(void*)surface
     let checked = try target.get()
+    if webview.gpu_player_enabled(view):
+        # A frame without a device (headless) shows nothing, as below.
+        webview.gpu_draw(view, checked) catch failure:
+            if failure.code != gpu.unavailable:
+                error(failure.code, failure.message)
+        return
     let width = webview.frame_width(view)
     let height = webview.frame_height(view)
     if width <= 0 or height <= 0:
