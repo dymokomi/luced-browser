@@ -26,8 +26,9 @@ from luce_browser_engine import webview_api as webview
 from luce_window import window
 from luce_window import input
 from luce_gpu import gpu
-from luce_std import files
+from luce_std import files, process
 from luce_clipboard import clipboard
+import c
 import interop
 import memory
 import os
@@ -57,6 +58,31 @@ func wake_window():
 pub func choose_player(view: webview.View):
     let wanted = os.env("LUCED_BROWSER_PLAYER") else ""
     webview.set_gpu_player(view, wanted != "cpu")
+
+## Gives the view the system's light or dark appearance as its pages' prefers-color-scheme.
+## Stopgap until luce-ui's Application.appearance and on_appearance (requested from
+## LUCE_LANG): the appearance is read once per run, on macOS only; elsewhere pages see light,
+## and a later system change is not followed yet.
+pub func apply_system_appearance(view: webview.View):
+    webview.set_dark(view, system_is_dark())
+
+## 0 unknown, 1 light, 2 dark: the system's appearance as first read this run.
+var system_appearance: i32
+
+## Whether the system's appearance is dark: on macOS, `defaults read -g AppleInterfaceStyle`
+## prints "Dark" in dark mode and fails in light mode.
+func system_is_dark() -> bool:
+    if system_appearance == 0:
+        system_appearance = 1
+        if os.macos:
+            let arguments: c.str[3] = ["read", "-g", "AppleInterfaceStyle"]
+            let done = process.run("/usr/bin/defaults", arguments) catch:
+                return false
+            defer done.release()
+            let output = done.value.output
+            if done.value.exit_code == 0 and output.bytes.length >= 4 and output.bytes[0..<4] == "Dark".bytes:
+                system_appearance = 2
+    return system_appearance == 2
 
 ## A page's frame on the GPU: the texture its pixels go to, the device holding it, the CPU
 ## copy they come through, and which frame is uploaded.
