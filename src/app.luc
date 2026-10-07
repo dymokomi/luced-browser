@@ -15,6 +15,7 @@ from tabs import TabStrip
 from commands import BrowserCommands
 from recovery import SessionTabs, tabs_path, crashed_tabs, note_saved_tabs, tabs_text, parse_tabs
 from luce_std import files
+from luce_window.input import Appearance
 import theme
 
 ## What a new tab shows.
@@ -61,6 +62,9 @@ pub class Browser:
     ## crashed run left, for run to open again.
     let session: SessionTabs
     let crashed: str
+    ## Whether the system's appearance is dark: what every page reads as
+    ## prefers-color-scheme, kept current through on_appearance.
+    var dark: bool = false
 
     pub func init(self) -> unit!:
         let font = Font()
@@ -82,13 +86,15 @@ pub class Browser:
         start_engine()
         webview.hand_over_sockets()
         self.sockets = {}
+        self.dark = self.app.appearance() == Appearance.dark
         self.tabs = [Tab()]
+        webview.set_dark(self.tabs[0].page.view, self.dark)
         self.rebuild_pages()
         self.connections = []
         self.connect()
         self.app.set_commands(self.commands.all())
-        # The tabs a crashed run left, read before this run's replace them.
 
+        # The tabs a crashed run left, read before this run's replace them.
         self.crashed = crashed_tabs()
         self.session = SessionTabs(tabs_path())
         _ = self.app.on_crash(note_saved_tabs)  # Application keeps the hook and removes it at close
@@ -97,6 +103,11 @@ pub class Browser:
     ## Buttons, the address field, the tab strip and the commands to what they do.
     func connect(self) -> unit!:
         let commands = self.commands
+        # The system's light or dark mode, followed live by every page.
+        self.connections.append(self.app.on_appearance(func (appearance: Appearance) -> unit!:
+            self.dark = appearance == Appearance.dark
+            for tab in self.tabs:
+                webview.set_dark(tab.page.view, self.dark)))
         self.connections.append(commands.back.on_trigger(func () -> unit!:
             webview.go_back(self.view())))
         self.connections.append(commands.forward.on_trigger(func () -> unit!:
@@ -171,6 +182,7 @@ pub class Browser:
     ## A new tab loading `location`, made current.
     pub func open_tab(self, location: str) -> unit!:
         let tab = Tab()
+        webview.set_dark(tab.page.view, self.dark)
         self.tabs.append(tab)
         self.rebuild_pages()
         self.select_tab(self.tabs.length - 1)
